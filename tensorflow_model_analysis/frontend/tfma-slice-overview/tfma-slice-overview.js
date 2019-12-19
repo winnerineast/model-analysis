@@ -13,23 +13,48 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-(() => {
-  /** @type {string} */
-  const DEFAULT_METRIC_TO_SORT = 'Slice';
+import {PolymerElement} from '@polymer/polymer/polymer-element.js';
+import {template} from './tfma-slice-overview-template.html.js';
 
-  /** @type {number} */
-  const MIN_CHART_WIDTH_PX = 680;
+import '@polymer/paper-dropdown-menu/paper-dropdown-menu.js';
+import '@polymer/paper-item/paper-item.js';
+import '@polymer/paper-listbox/paper-listbox.js';
+import '@org_googlewebcomponents_google_chart/google-chart/google-chart.js';
 
-  /** @type {number} */
-  const CHART_HEIGHT_PX = 200;
+/** @type {string} */
+const DEFAULT_METRIC_TO_SORT = 'Slice';
 
-  Polymer({
-    is: 'tfma-slice-overview',
+/** @type {number} */
+const MIN_CHART_WIDTH_PX = 680;
 
-    properties: {
+/** @type {number} */
+const CHART_HEIGHT_PX = 200;
+
+/**
+ * tfma-slice-overview allows the user to sort slices based on metrics values.
+ *
+ * @polymer
+ */
+export class SliceOverview extends PolymerElement {
+  constructor() {
+    super();
+  }
+
+  static get is() {
+    return 'tfma-slice-overview';
+  }
+
+  /** @return {!HTMLTemplateElement} */
+  static get template() {
+    return template;
+  }
+
+  /** @return {!PolymerElementProperties} */
+  static get properties() {
+    return {
       /**
        * The tfma.Data instance.
-       * @type {tfma.Data}
+       * @type {!tfma.TableProviderExt}
        */
       slices: {type: Object},
 
@@ -87,98 +112,149 @@
        * @private {!google.visualization.DataView|undefined}
        */
       dataView_: {type: Object},
-    },
 
-    observers:
-        ['plot_(displayed, slices, metricToShow, metricToSort_, chart_)'],
+      /**
+       * The selected slice.
+       * @private {string}
+       */
+      selectedSlice_: {type: String, observer: 'selectedSliceChanged_'},
+    };
+  }
 
-    /**
-     * @param {tfma.Data} slices
-     * @return {!Array<string>} metrics that can be
-     *     visualized by this component.
-     * @private
-     */
-    computeMetrics_: function(slices) {
-      return !slices ? [] : slices.getMetrics();
-    },
+  static get observers() {
+    return ['plot_(displayed, slices, metricToShow, metricToSort_, chart_)'];
+  }
 
-    /**
-     * @param {!Array<string>} metrics
-     * @return {!Array<string>} all metrics that can
-     *     be used for sorting the chart
-     * @private
-     */
-    computeMetricsForSorting_: function(metrics) {
-      return [DEFAULT_METRIC_TO_SORT].concat(metrics);
-    },
+  /**
+   * @param {tfma.Data} slices
+   * @return {!Array<string>} metrics that can be
+   *     visualized by this component.
+   * @private
+   */
+  computeMetrics_(slices) {
+    return !slices ? [] : slices.getMetrics();
+  }
 
-    /**
-     * Plots the chart when all data become available.
-     * @param {boolean} displayed
-     * @param {tfma.Data} slices
-     * @param {string} metricToShow
-     * @param {string} metricToSort
-     * @param {google.visualization.ColumnChart} chart
-     * @private
-     */
-    plot_: function(displayed, slices, metricToShow, metricToSort, chart) {
-      if (!displayed || !slices || !chart || !metricToShow || !metricToSort) {
-        return;
+  /**
+   * @param {!Array<string>} metrics
+   * @return {!Array<string>} all metrics that can
+   *     be used for sorting the chart
+   * @private
+   */
+  computeMetricsForSorting_(metrics) {
+    return [DEFAULT_METRIC_TO_SORT].concat(metrics);
+  }
+
+  /**
+   * Plots the chart when all data become available.
+   * @param {boolean} displayed
+   * @param {tfma.Data} slices
+   * @param {string} metricToShow
+   * @param {string} metricToSort
+   * @param {google.visualization.ColumnChart} chart
+   * @private
+   */
+  plot_(displayed, slices, metricToShow, metricToSort, chart) {
+    if (!displayed || !slices || !chart || !metricToShow || !metricToSort) {
+      return;
+    }
+
+    const metricToShowIndex = slices.getMetricIndex(metricToShow);
+    if (metricToShowIndex == -1) {
+      return;
+    }
+
+    const metricToSortIndex = slices.getMetricIndex(metricToSort);
+    const table = [['feature', metricToShow, metricToSort]];
+    const sortByFeatureId = metricToSortIndex == -1;
+    const isSortingByMetric = !sortByFeatureId && metricToSort != metricToShow;
+
+    slices.getFeatures().forEach(feature => {
+      let featureCell = feature;
+      const valueToSort = sortByFeatureId ?
+          slices.getFeatureId(feature) :
+          slices.getMetricValue(feature, metricToSort);
+      if (isSortingByMetric) {
+        featureCell = {
+          'v': feature,
+          'f': feature + ', ' + metricToSort + ':' +
+              slices.getMetricValue(feature, metricToSort)
+                  .toFixed(tfma.FLOATING_POINT_PRECISION)
+        };
       }
+      table.push([
+        featureCell, slices.getMetricValue(feature, metricToShow), valueToSort
+      ]);
+    });
 
-      const metricToShowIndex = slices.getMetricIndex(metricToShow);
-      if (metricToShowIndex == -1) {
-        return;
-      }
-
-      const metricToSortIndex = slices.getMetricIndex(metricToSort);
-      const table = [['feature', metricToShow, metricToSort]];
-      const sortByFeatureId = metricToSortIndex == -1;
-      const isSortingByMetric =
-          !sortByFeatureId && metricToSort != metricToShow;
-
-      slices.getFeatures().forEach(feature => {
-        let featureCell = feature;
-        const valueToSort = sortByFeatureId ?
-            slices.getFeatureId(feature) :
-            slices.getMetricValue(feature, metricToSort);
-        if (isSortingByMetric) {
-          featureCell = {
-            'v': feature,
-            'f': feature + ', ' + metricToSort + ':' +
-                slices.getMetricValue(feature, metricToSort)
-                    .toFixed(tfma.FLOATING_POINT_PRECISION)
-          };
-        }
-        table.push([
-          featureCell, slices.getMetricValue(feature, metricToShow), valueToSort
-        ]);
-      });
-
-      this.$.loader.dataTable(table).then(dataTable => {
-        dataTable.sort([{'column': 2}]);
-        this.$.loader.dataView(dataTable).then(dataView => {
-          dataView.setColumns([0, 1]);
-          this.dataView_ = dataView;
-          this.chart_.draw(dataView, {
-            'bar': {'groupWidth': '75%'},
-            'hAxis': {'ticks': []},
-            'legend': {'position': 'top'},
-            'width': Math.max(
-                this.getBoundingClientRect().width, MIN_CHART_WIDTH_PX),
-            'height': CHART_HEIGHT_PX,
-          });
+    this.$.loader.dataTable(table).then(dataTable => {
+      dataTable.sort([{'column': 2}]);
+      this.$.loader.dataView(dataTable).then(dataView => {
+        dataView.setColumns([0, 1]);
+        this.dataView_ = dataView;
+        this.chart_.draw(dataView, {
+          'bar': {'groupWidth': '75%'},
+          'hAxis': {'ticks': []},
+          'legend': {'position': 'top'},
+          'width':
+              Math.max(this.getBoundingClientRect().width, MIN_CHART_WIDTH_PX),
+          'height': CHART_HEIGHT_PX,
         });
       });
-    },
+    });
+  }
 
-    ready: function() {
-      // Start loading the visualization API and instantiate a column chart
-      // object as soon as we can.
-      this.$.loader.create('column', this.$.chart)
-          .then(chart => this.chart_ = chart);
-      this.displayed = this.getBoundingClientRect().width > 0;
-    },
-  });
+  /**
+   * The ready life cycle callback.
+   * @override
+   */
+  ready() {
+    super.ready();
 
-})();
+    // Start loading the visualization API and instantiate a column chart
+    // object as soon as we can.
+    this.$.loader.create('column', this.$.chart).then(chart => {
+      this.chart_ = chart;
+      this.$.loader.fireOnChartEvent(chart, 'select');
+    });
+    this.displayed = this.getBoundingClientRect().width > 0;
+  }
+
+  /**
+   * Event handler for google-chart-select.
+   * @private
+   */
+  handleSelect_() {
+    let selectedSlice = '';
+    const selection = this.chart_.getSelection();
+    if (selection.length) {
+      const table = this.slices.getDataTable();
+      const selectedRow = selection[0]['row'];
+      selectedSlice = table[selectedRow][0];
+      this.dispatchEvent(new CustomEvent(
+          tfma.Event.SELECT,
+          {detail: selectedSlice, composed: true, bubbles: true}));
+    }
+    this.selectedSlice_ = /** @type{string} */ (selectedSlice);
+  }
+
+  /**
+   * Observer for property selectedSlice.
+   * @param {string} selectedSlice
+   * @private
+   */
+  selectedSliceChanged_(selectedSlice) {
+    const selection = [];
+    if (selectedSlice) {
+      const table = this.slices.getDataTable();
+      for (let i = table.length - 1; i >= 0; i--) {
+        if (table[i][0] == selectedSlice) {
+          selection.push({'row': i, 'column': 1});
+        }
+      }
+    }
+    this.chart_.setSelection(selection);
+  }
+}
+
+customElements.define('tfma-slice-overview', SliceOverview);

@@ -13,37 +13,59 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-Polymer({
+import {PolymerElement} from '@polymer/polymer/polymer-element.js';
+import {template} from './tfma-precision-recall-curve-template.html.js';
 
-  is: 'tfma-precision-recall-curve',
+import '../tfma-google-chart-wrapper/tfma-google-chart-wrapper.js';
 
-  properties: {
-    /** @type {!Array<!Object>} */
-    data: {type: Array},
+/**
+ * tfma-precision-recall-curve enders the precision recall curve.
+ *
+ * @polymer
+ */
+export class PrecisionRecallCurve extends PolymerElement {
+  constructor() {
+    super();
+  }
 
-    /**
-     * Chart rendering options.
-     * @type {!Object}
-     * @private
-     */
-    options_: {
-      type: Object,
-      value: {
-        'legend': {'position': 'bottom'},
-        'hAxis': {'title': 'Recall'},
-        'vAxis': {'title': 'Precision'},
-        'series': {0: {'visibleInLegend': false}},
-        'explorer':
-            {actions: ['dragToPan', 'scrollToZoom', 'rightClickToReset']},
-      }
-    },
+  static get is() {
+    return 'tfma-precision-recall-curve';
+  }
 
-    /**
-     * The data to be plotted in the line chart.
-     * @private {!Array<!Array<string|number>>}
-     */
-    plotData_: {type: Array, computed: 'computePlotData_(data)'},
-  },
+  /** @return {!HTMLTemplateElement} */
+  static get template() {
+    return template;
+  }
+
+  /** @return {!PolymerElementProperties} */
+  static get properties() {
+    return {
+      /** @type {!Array<!Object>} */
+      data: {type: Array},
+
+      /**
+       * Chart rendering options.
+       * @type {!Object}
+       * @private
+       */
+      options_: {
+        type: Object,
+        value: {
+          'legend': {'position': 'bottom'},
+          'hAxis': {'title': 'Recall'},
+          'vAxis': {'title': 'Precision'},
+          'series': {0: {'visibleInLegend': false}},
+          'explorer': {actions: ['dragToZoom', 'rightClickToReset']},
+        }
+      },
+
+      /**
+       * The data to be plotted in the line chart.
+       * @private {!Array<!Array<string|number>>}
+       */
+      plotData_: {type: Array, computed: 'computePlotData_(data)'},
+    };
+  }
 
   /**
    * @param {!Array<!Object>} data
@@ -51,23 +73,20 @@ Polymer({
    *     that will be visualized in the claibration plot.
    * @private
    */
-  computePlotData_: function(data) {
+  computePlotData_(data) {
     const plotData =
         [['Recall', 'Precision', {'type': 'string', 'role': 'tooltip'}]];
     data.forEach((entry) => {
       const threshold = Math.max(0, Math.min(1, entry['threshold'] || 0));
-      // Due to potential division by zero, precision and recall can be NaN or
-      // Infinity. These values are cannot be serialized as valid json. To
-      // handle these cases, assume NaN and Infinity are converted to strings,
-      // "NaN" and "Infinity" and use parseFloat to get back to NaN and
-      // Infinity.
-      const recall = parseFloat(entry['recall'] || 0);
-      const precision = parseFloat(entry['precision'] || 0);
+      const recall = tfma.CellRenderer.extractFloatValue(entry, 'recall');
+      const precision = tfma.CellRenderer.extractFloatValue(entry, 'precision');
       const tooltip = 'Prediction threshold: ' + threshold.toFixed(5) +
           '\nRecall: ' + recall.toFixed(5) +
           '\nPrecision: ' + precision.toFixed(5);
       plotData.push([recall, precision, tooltip]);
     });
     return plotData;
-  },
-});
+  }
+}
+
+customElements.define('tfma-precision-recall-curve', PrecisionRecallCurve);

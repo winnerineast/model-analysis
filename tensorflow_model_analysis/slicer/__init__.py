@@ -11,3 +11,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""Init module for TensorFlow Model Analysis slicer."""
+
+from tensorflow_model_analysis.slicer.slicer_lib import deserialize_slice_key
+from tensorflow_model_analysis.slicer.slicer_lib import FanoutSlices
+from tensorflow_model_analysis.slicer.slicer_lib import serialize_slice_key
+from tensorflow_model_analysis.slicer.slicer_lib import SingleSliceSpec

@@ -15,84 +15,234 @@
 
 from __future__ import absolute_import
 from __future__ import division
-
+# Standard __future__ imports
 from __future__ import print_function
 
-import copy
-
+# Standard Imports
 import numpy as np
+import six
 import tensorflow as tf
+from tfx_bsl.beam import shared
 
-from tensorflow_model_analysis.types_compat import Any, Dict, List, Text, Tuple, Union, NamedTuple
+from typing import Any, Callable, Dict, List, Optional, Text, Tuple, Union, NamedTuple
 
 # pylint: disable=invalid-name
+
 TensorType = Union[tf.Tensor, tf.SparseTensor]
-DictOfTensorType = Dict[bytes, TensorType]
+TensorOrOperationType = Union[TensorType, tf.Operation]
+DictOfTensorType = Dict[Text, TensorType]
 TensorTypeMaybeDict = Union[TensorType, DictOfTensorType]
 
+TensorValue = Union[tf.compat.v1.SparseTensorValue, np.ndarray]
+DictOfTensorValue = Dict[Text, TensorValue]
+TensorValueMaybeDict = Union[TensorValue, DictOfTensorValue]
+
+MetricVariablesType = List[Any]
+
+
+class ValueWithTDistribution(
+    NamedTuple('ValueWithTDistribution', [
+        ('sample_mean', float),
+        ('sample_standard_deviation', float),
+        ('sample_degrees_of_freedom', int),
+        ('unsampled_value', float),
+    ])):
+  r"""Represents the t-distribution value.
+
+  It includes sample_mean, sample_standard_deviation,
+  sample_degrees_of_freedom. And also unsampled_value is also stored here to
+  record the value calculated without bootstrapping.
+  The sample_standard_deviation is calculated as:
+  \sqrt{ \frac{1}{N-1} \sum_{i=1}^{N}{(x_i - \bar{x})^2} }
+  """
+
+  def __new__(
+      cls,
+      sample_mean: float,
+      sample_standard_deviation: Optional[float] = None,
+      sample_degrees_of_freedom: Optional[int] = None,
+      unsampled_value: Optional[float] = None,
+  ):
+    return super(ValueWithTDistribution,
+                 cls).__new__(cls, sample_mean, sample_standard_deviation,
+                              sample_degrees_of_freedom, unsampled_value)
+
+
+# AddMetricsCallback should have the following prototype:
+#   def add_metrics_callback(features_dict, predictions_dict, labels_dict):
+#
+# It should create and return a metric_ops dictionary, such that
+# metric_ops['metric_name'] = (value_op, update_op), just as in the Trainer.
+#
+# Note that features_dict, predictions_dict and labels_dict are not
+# necessarily dictionaries - they might also be Tensors, depending on what the
+# model's eval_input_receiver_fn returns.
+# pyformat: disable
+AddMetricsCallbackType = Any
+# pyformat: enable
+
 # Type of keys we support for prediction, label and features dictionaries.
-KeyType = Union[Union[bytes, Text], Tuple[Union[bytes, Text], Ellipsis]]
+FPLKeyType = Union[Text, Tuple[Text, ...]]
 
-# Value of a Scalar fetched during session.run.
-FetchedScalarValue = Union[np.float32, np.float64, np.int32, np.int64, bytes]
+# Dictionary of Tensor values fetched. The dictionary maps original dictionary
+# keys => ('node' => value). This type exists for backward compatibility with
+# FeaturesPredictionsLabels, new code should use DictOfTensorValue instead.
+DictOfFetchedTensorValues = Dict[FPLKeyType, Dict[Text, TensorValue]]
 
-# Value of a Tensor fetched using session.run.
-FetchedTensorValue = Union[tf.SparseTensorValue, np.ndarray]
+FeaturesPredictionsLabels = NamedTuple(
+    'FeaturesPredictionsLabels', [('input_ref', int),
+                                  ('features', DictOfFetchedTensorValues),
+                                  ('predictions', DictOfFetchedTensorValues),
+                                  ('labels', DictOfFetchedTensorValues)])
 
-# Value fechted using session.run.
-FetchedValue = Union[FetchedScalarValue, FetchedTensorValue]
+# Used in building the model diagnostics table, a MaterializedColumn is a value
+# inside of Extracts that will be emitted to file. Note that for strings, the
+# values are raw byte strings rather than unicode strings. This is by design, as
+# features can have arbitrary bytes values.
+MaterializedColumn = NamedTuple(
+    'MaterializedColumn',
+    [('name', Text),
+     ('value', Union[List[bytes], List[int], List[float], bytes, int, float])])
 
-# Dictionary of Tensor values fetched.
-# The dictionary maps original dictionary keys => ('node' => value).
-DictOfFetchedTensorValues = Dict[KeyType, Dict[bytes, FetchedTensorValue]]
+# Extracts represent data extracted during pipeline processing. In order to
+# provide a flexible API, these types are just dicts where the keys are defined
+# (reserved for use) by different extractor implementations. For example, the
+# PredictExtractor stores the data for the features, labels, and predictions
+# under the keys "features", "labels", and "predictions".
+Extracts = Dict[Text, Any]
 
-ListOfFetchedTensorValues = List[FetchedTensorValue]
+# pylint: enable=invalid-name
 
 
 def is_tensor(obj):
   return isinstance(obj, tf.Tensor) or isinstance(obj, tf.SparseTensor)
 
 
-# Used in building the model diagnostics table, a MatrializedColumn is a value
-# inside of ExampleAndExtract that will be emitted to file.
-MaterializedColumn = NamedTuple(
-    'MaterializedColumn',
-    [('name', bytes),
-     ('value', Union[List[bytes], List[int], List[float], bytes, int, float])])
+class ModelTypes(object):
+  """Instances of different model types.
 
-# Used in building model diagnostics table, the ExampleAndExtracts holds an
-# example and all its "extractions." Extractions that should be emitted to file.
-# Each Extract has a name, stored as the key of the DictOfExtractedValues.
-DictOfExtractedValues = Dict[Text, Any]
+  Only one instance can be set at a time.
+
+  Attributes:
+    saved_model: Saved model.
+    keras_model: Keras model.
+    eval_saved_model: EvalSavedModel model.
+  """
+  # C++ APIs need the __weakref__ to be set.
+  __slots__ = ['saved_model', 'keras_model', 'eval_saved_model', '__weakref__']
+
+  def __init__(self,
+               saved_model: Optional[Any] = None,
+               keras_model: Optional[tf.keras.Model] = None,
+               eval_saved_model: Optional[Any] = None):
+    self.saved_model = saved_model
+    self.keras_model = keras_model
+    self.eval_saved_model = eval_saved_model
 
 
-class ExampleAndExtracts(
-    NamedTuple('ExampleAndExtracts', [('example', bytes),
-                                      ('extracts', DictOfExtractedValues)])):
-  """Example and extracts."""
+class ModelLoader(
+    NamedTuple('ModelLoader', [('tags', List[Text]),
+                               ('shared_handle', shared.Shared),
+                               ('construct_fn', Callable)])):
+  """Model loader is responsible for loading shared model types.
 
-  def create_copy_with_shallow_copy_of_extracts(self):
-    """Returns a new copy of this with a shallow copy of extracts.
+  Attributes:
+    tags: Model tags (e.g. 'serve' for serving or 'eval' for EvalSavedModel).
+    shared_handle: Optional handle to a shared.Shared object for sharing the
+      in-memory model within / between stages. Used in combination with the
+      construct_fn to load the ModelTypes for the shared model.
+    construct_fn: A callable which creates a construct function to load the
+      ModelTypes instance. Callable takes a beam.metrics distribution to track
+      model load times.
+  """
 
-    This is NOT equivalent to making a shallow copy with copy.copy(this).
-    That does NOT make a shallow copy of the dictionary. An illustration of
-    the differences:
-      a = ExampleAndExtracts(example='content', extracts=dict(apple=[1, 2]))
+  def __new__(cls,
+              tags: Optional[List[Text]] = None,
+              shared_handle: Optional[shared.Shared] = None,
+              construct_fn: Optional[Callable[..., Any]] = None):
+    # TODO(b/140845455): It's likely very brittle to have the shared_handle
+    # optional since it needs to be tied to the unique shared state it's
+    # responsible for.
+    if not shared_handle:
+      shared_handle = shared.Shared()
+    return super(ModelLoader, cls).__new__(cls, tags, shared_handle,
+                                           construct_fn)
 
-      # The dictionary is shared (and hence the elements are also shared)
-      b = copy.copy(a)
-      b.extracts['banana'] = 10
-      assert a.extracts['banana'] == 10
 
-      # The dictionary is not shared (but the elements are)
-      c = a.create_copy_with_shallow_copy_of_extracts()
-      c.extracts['cherry'] = 10
-      assert 'cherry' not in a.extracts  # The dictionary is not shared
-      c.extracts['apple'][0] = 100
-      assert a.extracts['apple'][0] == 100  # But the elements are
+class EvalSharedModel(
+    NamedTuple(
+        'EvalSharedModel',
+        [
+            ('model_path', Text),
+            ('add_metrics_callbacks',
+             List[Callable]),  # List[AnyMetricsCallbackType]
+            ('include_default_metrics', bool),
+            ('example_weight_key', Union[Text, Dict[Text, Text]]),
+            ('additional_fetches', List[Text]),
+            ('model_loader', ModelLoader),
+        ])):
+  # pyformat: disable
+  """Shared model used during extraction and evaluation.
 
-    Returns:
-      A shallow copy of this object.
-    """
-    return ExampleAndExtracts(
-        example=self.example, extracts=copy.copy(self.extracts))
+  Attributes:
+    model_path: Path to EvalSavedModel (containing the saved_model.pb file).
+    add_metrics_callbacks: Optional list of callbacks for adding additional
+      metrics to the graph. The names of the metrics added by the callbacks
+      should not conflict with existing metrics. See below for more details
+      about what each callback should do. The callbacks are only used during
+      evaluation.
+    include_default_metrics: True to include the default metrics that are part
+      of the saved model graph during evaluation.
+    example_weight_key: Example weight key (single-output model) or dict of
+      example weight keys (multi-output model) keyed by output_name.
+    additional_fetches: Prefixes of additional tensors stored in
+      signature_def.inputs that should be fetched at prediction time. The
+      "features" and "labels" tensors are handled automatically and should not
+      be included in this list.
+    model_loader: Model loader.
+
+  More details on add_metrics_callbacks:
+
+    Each add_metrics_callback should have the following prototype:
+      def add_metrics_callback(features_dict, predictions_dict, labels_dict):
+
+    Note that features_dict, predictions_dict and labels_dict are not
+    necessarily dictionaries - they might also be Tensors, depending on what the
+    model's eval_input_receiver_fn returns.
+
+    It should create and return a metric_ops dictionary, such that
+    metric_ops['metric_name'] = (value_op, update_op), just as in the Trainer.
+
+    Short example:
+
+    def add_metrics_callback(features_dict, predictions_dict, labels):
+      metrics_ops = {}
+      metric_ops['mean_label'] = tf.metrics.mean(labels)
+      metric_ops['mean_probability'] = tf.metrics.mean(tf.slice(
+        predictions_dict['probabilities'], [0, 1], [2, 1]))
+      return metric_ops
+  """
+  # pyformat: enable
+
+  def __new__(
+      cls,
+      model_path: Optional[Text] = None,
+      add_metrics_callbacks: Optional[List[AddMetricsCallbackType]] = None,
+      include_default_metrics: Optional[bool] = True,
+      example_weight_key: Optional[Union[Text, Dict[Text, Text]]] = None,
+      additional_fetches: Optional[List[Text]] = None,
+      model_loader: Optional[ModelLoader] = None,
+      construct_fn: Optional[Callable[..., Any]] = None):
+    if not add_metrics_callbacks:
+      add_metrics_callbacks = []
+    if model_loader and construct_fn:
+      raise ValueError(
+          'only one of model_loader or construct_fn should be used')
+    if construct_fn:
+      model_loader = ModelLoader(tags=None, construct_fn=construct_fn)
+    if model_path is not None:
+      model_path = six.ensure_str(model_path)
+    return super(EvalSharedModel,
+                 cls).__new__(cls, model_path, add_metrics_callbacks,
+                              include_default_metrics, example_weight_key,
+                              additional_fetches, model_loader)

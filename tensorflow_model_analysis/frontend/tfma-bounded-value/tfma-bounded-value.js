@@ -13,43 +13,65 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-Polymer({
+import {PolymerElement} from '@polymer/polymer/polymer-element.js';
+import {template} from './tfma-bounded-value-template.html.js';
 
-  is: 'tfma-bounded-value',
+/**
+ * tfma-bounded-value renders a bounded value. The bounds can represent
+ * confidence interval, numerical error, etc.
+ *
+ * @polymer
+ */
+export class BoundedValue extends PolymerElement {
+  constructor() {
+    super();
+  }
 
-  properties: {
-    /**
-     * The upper bound of the estimate range.
-     * @type {number}
-     */
-    upperBound: {type: Number},
+  static get is() {
+    return 'tfma-bounded-value';
+  }
+
+  /** @return {!HTMLTemplateElement} */
+  static get template() {
+    return template;
+  }
+
+  /** @return {!PolymerElementProperties} */
+  static get properties() {
+    return {
+      /**
+       * The upper bound of the estimate range.
+       * @type {number}
+       */
+      upperBound: {type: Number},
 
 
-    /**
-     * The lower bound of the estimate range.
-     * @type {number}
-     */
-    lowerBound: {type: Number},
+      /**
+       * The lower bound of the estimate range.
+       * @type {number}
+       */
+      lowerBound: {type: Number},
 
-    /**
-     * The value.
-     * @type {string}
-     */
-    value: {type: Number},
+      /**
+       * The value.
+       * @type {string}
+       */
+      value: {type: Number},
 
-    /**
-     * The serialized form of the data.
-     * @type {string}
-     */
-    data: {type: String, value: '', observer: 'dataChanged_'},
-  },
+      /**
+       * The serialized form of the data.
+       * @type {string}
+       */
+      data: {type: String, observer: 'dataChanged_'},
+    };
+  }
 
   /**
    * Observer for the property data.
    * @param {string} serializedData
    * @private
    */
-  dataChanged_: function(serializedData) {
+  dataChanged_(serializedData) {
     if (serializedData) {
       try {
         const parsedData = JSON.parse(serializedData);
@@ -59,14 +81,17 @@ Polymer({
       } catch (e) {
       }
     }
-  },
+  }
 
   /**
-   * @param {number} value
+   * @param {string|number} value
    * @return {string} The given value formatted as a string.
    * @private
    */
-  formatValue_: function(value) {
-    return value.toFixed(tfma.FLOATING_POINT_PRECISION);
-  },
-});
+  formatValue_(value) {
+    return value == 'NaN' ? 'NaN' :
+                            value.toFixed(tfma.FLOATING_POINT_PRECISION);
+  }
+}
+
+customElements.define('tfma-bounded-value', BoundedValue);

@@ -17,10 +17,10 @@ The true model is animals CONTAINS 'cat' and 'dog'.
 """
 from __future__ import absolute_import
 from __future__ import division
-
+# Standard __future__ imports
 from __future__ import print_function
 
-
+# Standard Imports
 
 import tensorflow as tf
 from tensorflow_model_analysis.eval_saved_model import export
@@ -44,16 +44,17 @@ def simple_linear_classifier_multivalent(export_path, eval_export_path):
                 dense_shape=[8, 3])
     }, tf.constant([[0], [0], [0], [0], [1], [0], [0], [1]])
 
-  animals = tf.contrib.layers.sparse_column_with_keys('animals',
-                                                      ['bird', 'cat', 'dog'])
-  label = tf.contrib.layers.real_valued_column('label')
+  animals = tf.feature_column.categorical_column_with_vocabulary_list(
+      'animals', ['bird', 'cat', 'dog'])
+  label = tf.feature_column.numeric_column('label')
 
   all_features = [animals]
-  feature_spec = tf.contrib.layers.create_feature_spec_for_parsing(all_features)
-  eval_feature_spec = tf.contrib.layers.create_feature_spec_for_parsing(
-      all_features + [label])
+  feature_spec = tf.feature_column.make_parse_example_spec(all_features)
+  eval_feature_spec = tf.feature_column.make_parse_example_spec(all_features +
+                                                                [label])
 
-  classifier = tf.estimator.LinearClassifier(feature_columns=all_features)
+  classifier = tf.estimator.LinearClassifier(
+      feature_columns=all_features, loss_reduction=tf.losses.Reduction.SUM)
   classifier.train(input_fn=input_fn, steps=5000)
 
   return util.export_model_and_eval_model(

@@ -18,42 +18,55 @@ from __future__ import division
 from __future__ import print_function
 import os
 import tensorflow as tf
+from tensorflow_model_analysis import config
 from tensorflow_model_analysis import constants
-from tensorflow_model_analysis.api.impl import api_types
+from tensorflow_model_analysis.api import model_eval_lib
 from tensorflow_model_analysis.eval_saved_model import testutil
-from tensorflow_model_analysis.slicer.slicer import OVERALL_SLICE_NAME
-from tensorflow_model_analysis.slicer.slicer import SingleSliceSpec
+from tensorflow_model_analysis.slicer.slicer_lib import OVERALL_SLICE_NAME
+from tensorflow_model_analysis.slicer.slicer_lib import SingleSliceSpec
 from tensorflow_model_analysis.view import util
+
+
+def _add_to_nested_dict(metrics):
+  return {
+      '': {
+          '': metrics,
+      },
+  }
 
 
 class UtilTest(testutil.TensorflowModelAnalysisTest):
   column_1 = 'col1'
   column_2 = 'col2'
 
-  metrics_a = {'a': 1, 'b': 2, 'example_weight': 3}
+  metrics_a = _add_to_nested_dict({'a': 1, 'b': 2, 'example_weight': 3})
   slice_a = 'a'
   column_a = column_1 + ':' + slice_a
   result_a = ([(column_1, slice_a)], metrics_a)
 
   slice_b = 'b'
-  metrics_b = {'a': 4, 'b': 5, 'example_weight': 6}
+  metrics_b = _add_to_nested_dict({'a': 4, 'b': 5, 'example_weight': 6})
   column_b = column_1 + ':' + slice_b
   result_b = ([(column_1, slice_b)], metrics_b)
 
   slice_c = 'c'
-  metrics_c = {'a': 1, 'b': 3, 'example_weight': 5}
+  metrics_c = _add_to_nested_dict({'a': 1, 'b': 3, 'example_weight': 5})
   column_c = column_2 + ':' + slice_c
   result_c = ([(column_2, slice_c)], metrics_c)
 
   slice_d = 'd'
-  metrics_d = {'a': 2, 'b': 4, 'example_weight': 6}
+  metrics_d = _add_to_nested_dict({'a': 2, 'b': 4, 'example_weight': 6})
   column_d = column_1 + '_X_' + column_2 + ':' + slice_a + '_X_' + slice_d
   result_d = ([(column_1, slice_a), (column_2, slice_d)], metrics_d)
 
-  metrics_aggregate = {'a': 10, 'b': 20, 'example_weight': 30}
+  metrics_aggregate = _add_to_nested_dict({
+      'a': 10,
+      'b': 20,
+      'example_weight': 30
+  })
   result_aggregate = ([], metrics_aggregate)
 
-  metrics_c2 = {'a': 11, 'b': 33, 'example_weight': 55}
+  metrics_c2 = _add_to_nested_dict({'a': 11, 'b': 33, 'example_weight': 55})
   result_c2 = ([(column_2, slice_c)], metrics_c2)
 
   data_location_1 = 'a.data'
@@ -65,6 +78,8 @@ class UtilTest(testutil.TensorflowModelAnalysisTest):
   full_model_location_2 = os.path.join('full', 'path', 'to', 'model',
                                        base_model_location_2)
 
+  key = 'plot_key'
+
   plots_data_a = {
       'calibrationHistogramBuckets': {
           'buckets': [{
@@ -74,23 +89,33 @@ class UtilTest(testutil.TensorflowModelAnalysisTest):
           }],
       }
   }
-  plots_a = ([(column_1, slice_a)], plots_data_a)
+  plots_a = ([(column_1, slice_a)], _add_to_nested_dict(plots_data_a))
 
   plots_data_b = {
-      'calibrationHistogramBuckets': {
-          'buckets': [{
-              'v': 0.25
-          }, {
-              'v': 0.5
-          }, {
-              'v': 0.75
-          }],
+      key: {
+          'calibrationHistogramBuckets': {
+              'buckets': [{
+                  'v': 0.25
+              }, {
+                  'v': 0.5
+              }, {
+                  'v': 0.75
+              }],
+          }
       }
   }
-  plots_b = ([(column_1, slice_b)], plots_data_b)
+  plots_b = ([(column_1, slice_b)], _add_to_nested_dict(plots_data_b))
 
-  plots_data_b2 = {'calibrationHistogramBuckets': {'buckets': [{'v': 0.5}],}}
-  plots_b2 = ([(column_1, slice_b)], plots_data_b)
+  plots_data_b2 = {
+      key: {
+          'calibrationHistogramBuckets': {
+              'buckets': [{
+                  'v': 0.5
+              }],
+          }
+      }
+  }
+  plots_b2 = ([(column_1, slice_b)], _add_to_nested_dict(plots_data_b))
 
   plots_data_c = {
       'calibrationHistogramBuckets': {
@@ -101,7 +126,51 @@ class UtilTest(testutil.TensorflowModelAnalysisTest):
           }],
       }
   }
-  plots_c = ([(column_1, slice_c)], plots_data_c)
+  plots_c = ([(column_1, slice_c)], _add_to_nested_dict(plots_data_c))
+
+  plots_data_c2 = {
+      'label/head_a': {
+          'calibrationHistogramBuckets': {
+              'buckets': [{
+                  'v': 0.5
+              }],
+          }
+      },
+      'label/head_b': {
+          'calibrationHistogramBuckets': {
+              'buckets': [{
+                  'v': 0.5
+              }],
+          }
+      }
+  }
+  plots_c2 = ([(column_2, slice_c)], _add_to_nested_dict(plots_data_c2))
+
+  plots_data_0 = {
+      'calibrationHistogramBuckets': {
+          'buckets': [{
+              'v': 0
+          }, {
+              'v': 1
+          }],
+      }
+  }
+  plots_data_1 = {
+      'calibrationHistogramBuckets': {
+          'buckets': [{
+              'v': 0
+          }, {
+              'v': 1
+          }],
+      }
+  }
+  plots_multi_class = ([(column_2, slice_a)], {
+      '': {
+          'classId:0': plots_data_0,
+          'classId:1': plots_data_1
+      }
+  })
+  column_2a = column_2 + ':' + slice_a
 
   def _makeTestData(self):
     return [
@@ -115,28 +184,38 @@ class UtilTest(testutil.TensorflowModelAnalysisTest):
         self.plots_b,
         self.plots_b2,
         self.plots_c,
+        self.plots_c2,
+        self.plots_multi_class,
     ]
 
   def _makeEvalResults(self):
-    result_a = api_types.EvalResult(
+    result_a = model_eval_lib.EvalResult(
         slicing_metrics=self._makeTestData(),
         plots=None,
-        config=api_types.EvalConfig(
-            example_weight_metric_key=None,
-            slice_spec=None,
-            data_location=self.data_location_1,
-            model_location=self.model_location_1))
-
-    result_b = api_types.EvalResult(
+        config=config.EvalConfig(
+            input_data_specs=[
+                config.InputDataSpec(location=self.data_location_1)
+            ],
+            model_specs=[config.ModelSpec(location=self.model_location_1)]))
+    result_b = model_eval_lib.EvalResult(
         slicing_metrics=[self.result_c2],
         plots=None,
-        config=api_types.EvalConfig(
-            example_weight_metric_key=None,
-            slice_spec=None,
-            data_location=self.full_data_location_2,
-            model_location=self.full_model_location_2))
-    return api_types.EvalResults([result_a, result_b],
-                                 constants.MODEL_CENTRIC_MODE)
+        config=config.EvalConfig(
+            input_data_specs=[
+                config.InputDataSpec(location=self.full_data_location_2)
+            ],
+            model_specs=[config.ModelSpec(location=self.full_model_location_2)
+                        ]))
+    return model_eval_lib.EvalResults([result_a, result_b],
+                                      constants.MODEL_CENTRIC_MODE)
+
+  def _makeEvalConfig(self):
+    eval_config = config.EvalConfig(
+        input_data_specs=[config.InputDataSpec(location='')],
+        model_specs=[
+            config.ModelSpec(location='', example_weight_key='testing_key')
+        ])
+    return eval_config
 
   def testGetSlicingMetrics(self):
     self.assertEqual(
@@ -190,12 +269,12 @@ class UtilTest(testutil.TensorflowModelAnalysisTest):
     self.assertEqual(
         util.get_slicing_metrics(
             self._makeTestData(),
-            slicing_spec=SingleSliceSpec(features=[(
-                self.column_1, self.slice_a), (self.column_2, self.slice_d)])),
-        [{
-            'slice': self.column_d,
-            'metrics': self.metrics_d
-        }])
+            slicing_spec=SingleSliceSpec(
+                features=[(self.column_1,
+                           self.slice_a), (self.column_2, self.slice_d)])), [{
+                               'slice': self.column_d,
+                               'metrics': self.metrics_d
+                           }])
 
   def testRaisesErrorWhenColumnNotAvailable(self):
     with self.assertRaises(ValueError):
@@ -258,12 +337,21 @@ class UtilTest(testutil.TensorflowModelAnalysisTest):
           display_full_path=False)
 
   def testGetPlotDataAndConfig(self):
-    data, config = util.get_plot_data_and_config(
+    data, eval_config = util.get_plot_data_and_config(
         self._makeTestPlotsData(),
         SingleSliceSpec(features=[(self.column_1, self.slice_a)]))
 
-    self.assertEquals(data, self.plots_data_a)
-    self.assertEquals(config['sliceName'], self.column_a)
+    self.assertEqual(data, self.plots_data_a)
+    self.assertEqual(eval_config['sliceName'], self.column_a)
+
+  def testGetPlotDataAndConfigForMultiClass(self):
+    data, eval_config = util.get_plot_data_and_config(
+        self._makeTestPlotsData(),
+        SingleSliceSpec(features=[(self.column_2, self.slice_a)]),
+        class_id=0)
+
+    self.assertEqual(data, self.plots_data_0)
+    self.assertEqual(eval_config['sliceName'], self.column_2a)
 
   def testRaisesErrorWhenNoMatchAvailableInPlotData(self):
     with self.assertRaises(ValueError):
@@ -282,7 +370,7 @@ class UtilTest(testutil.TensorflowModelAnalysisTest):
         self._makeTestPlotsData(),
         SingleSliceSpec(features=[(self.column_1, self.slice_c)]))
 
-    self.assertEquals(data, {
+    self.assertEqual(data, {
         'calibrationHistogramBuckets': {
             'buckets': [{
                 'v': 0.5
@@ -291,6 +379,65 @@ class UtilTest(testutil.TensorflowModelAnalysisTest):
             }],
         }
     })
+
+  def testGetPlotUsingLabel(self):
+    data, _ = util.get_plot_data_and_config(
+        self._makeTestPlotsData(),
+        SingleSliceSpec(features=[(self.column_2, self.slice_c)]),
+        label='head_a')
+
+    self.assertEqual(data, self.plots_data_c2['label/head_a'])
+
+  def testRaisesErrorWhenLabelNotProvided(self):
+    with self.assertRaises(ValueError):
+      util.get_plot_data_and_config(
+          self._makeTestPlotsData(),
+          SingleSliceSpec(features=[(self.column_2, self.slice_c)]))
+
+  def testRaisesErrorWhenNoMatchForLabel(self):
+    with self.assertRaises(ValueError):
+      util.get_plot_data_and_config(
+          self._makeTestPlotsData(),
+          SingleSliceSpec(features=[(self.column_1, self.slice_c)]),
+          label='head_a')
+
+  def testRaisesErrorWhenMultipleMatchForLabel(self):
+    with self.assertRaises(ValueError):
+      util.get_plot_data_and_config(
+          self._makeTestPlotsData(),
+          SingleSliceSpec(features=[(self.column_2, self.slice_c)]),
+          label='head_')
+
+  def testRaiseErrorWhenBothLabelAndPlotKeyAreProvided(self):
+    with self.assertRaises(ValueError):
+      util.get_plot_data_and_config(
+          self._makeTestPlotsData(),
+          SingleSliceSpec(features=[(self.column_2, self.slice_c)]),
+          label='head_a',
+          output_name='')
+
+  def testRaiseErrorWhenMoreThanOneMultiClassKeyAreProvided(self):
+    with self.assertRaises(ValueError):
+      util.get_plot_data_and_config(
+          self._makeTestPlotsData(),
+          SingleSliceSpec(features=[(self.column_2, self.slice_c)]),
+          top_k=3,
+          class_id=0)
+
+  def testGetSlicingConfig(self):
+    eval_config = self._makeEvalConfig()
+    slicing_config = util.get_slicing_config(eval_config)
+    self.assertEqual(
+        slicing_config,
+        {'weightedExamplesColumn': 'post_export_metrics/example_weight'})
+
+  def testOverrideWeightColumnForSlicingMetricsView(self):
+    overriding_weight_column = 'override'
+    eval_config = self._makeEvalConfig()
+    slicing_config = util.get_slicing_config(
+        eval_config, weighted_example_column_to_use=overriding_weight_column)
+    self.assertEqual(slicing_config['weightedExamplesColumn'],
+                     overriding_weight_column)
 
 
 if __name__ == '__main__':

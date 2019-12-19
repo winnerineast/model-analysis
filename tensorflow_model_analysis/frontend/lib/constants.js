@@ -52,22 +52,37 @@ const FLOATING_POINT_PRECISION = 5;
 
 /** @enum {string} */
 const MetricValueFormat = {
-  STRING: 'string',
   FLOAT: 'float',
-  INT: 'int',
   HTML: 'html',
-  ROW_ID: 'rowId',
+  INT: 'int',
   INT64: 'int64',
   MULTI_VALUES_METRIC_AT_K: 'multiValueMetricAtK',
+  ROW_ID: 'rowId',
+  STRING: 'string',
+  VALUE_AT_CUTOFFS: 'valueAtCutoffs',
 };
+
+/** @type {string} */
+const KEY = 'key';
+
+/** @type {string} */
+const METRIC_KEYS_AND_VALUES = 'metricKeysAndValues';
+
+/** @type {string} */
+const VALUE = 'value';
 
 /** @enum {string}*/
 const PlotTypes = {
+  ACCURACY_CHARTS: 'accuracyPrecisionRecallF1Charts',
   CALIBRATION_PLOT: 'calibrationPlot',
+  GAIN_CHART: 'gainChart',
   MACRO_PRECISION_RECALL_CURVE: 'macroPrecisionRecallCurve',
   MICRO_PRECISION_RECALL_CURVE: 'microPrecisionRecallCurve',
+  MULTI_CLASS_CONFUSION_MATRIX: 'multiClassConfusionMatrix',
+  MULTI_LABEL_CONFUSION_MATRIX: 'multiLabelConfusionMatrix',
   PREDICTION_DISTRIBUTION: 'predictionDistribution',
   PRECISION_RECALL_CURVE: 'precisionRecallCurve',
+  RESIDUAL_PLOT: 'residualPlot',
   ROC_CURVE: 'rocCurve',
   WEIGHTED_PRECISION_RECALL_CURVE: 'weightedPrecisionRecallCurve',
 };
@@ -79,6 +94,8 @@ const PlotDataFieldNames = {
   CONFUSION_MATRICES: 'matrices',
   MACRO_PRECISION_RECALL_CURVE_DATA: 'macroValuesByThreshold',
   MICRO_PRECISION_RECALL_CURVE_DATA: 'microValuesByThreshold',
+  MULTI_CLASS_CONFUSION_MATRIX_DATA: 'multiClassConfusionMatrixAtThresholds',
+  MULTI_LABEL_CONFUSION_MATRIX_DATA: 'multiLabelConfusionMatrixAtThresholds',
   PRECISION_RECALL_CURVE_DATA: 'binaryClassificationByThreshold',
   WEIGHTED_PRECISION_RECALL_CURVE_DATA: 'weightedValuesByThreshold',
 };
@@ -120,6 +137,9 @@ const PlotDataDisplay = {
   EXAMPLES_MAX_STEP: 10
 };
 
+/** @type {string} */
+const PLOT_KEYS_AND_VALUES = 'plotKeysAndValues';
+
 /**
  * @typedef {
  *   function((string|number|!Object),(string|number|!Object)):(number|string|!Object)
@@ -156,10 +176,17 @@ goog.exportSymbol(
 
 goog.exportSymbol('tfma.FLOATING_POINT_PRECISION', FLOATING_POINT_PRECISION);
 
+goog.exportSymbol('tfma.KEY', KEY);
+
 goog.exportSymbol('tfma.MetricValueFormat.INT', MetricValueFormat.INT);
 goog.exportSymbol('tfma.MetricValueFormat.INT64', MetricValueFormat.INT64);
 goog.exportSymbol('tfma.MetricValueFormat.FLOAT', MetricValueFormat.FLOAT);
 goog.exportSymbol('tfma.MetricValueFormat.ROW_ID', MetricValueFormat.ROW_ID);
+goog.exportSymbol(
+    'tfma.MetricValueFormat.VALUE_AT_CUTOFFS',
+    MetricValueFormat.VALUE_AT_CUTOFFS);
+
+goog.exportSymbol('tfma.METRIC_KEYS_AND_VALUES', METRIC_KEYS_AND_VALUES);
 
 goog.exportSymbol(
     'tfma.PlotDataFieldNames.CALIBRATION_BUCKETS',
@@ -177,6 +204,12 @@ goog.exportSymbol(
     'tfma.PlotDataFieldNames.MICRO_PRECISION_RECALL_CURVE_DATA',
     PlotDataFieldNames.MICRO_PRECISION_RECALL_CURVE_DATA);
 goog.exportSymbol(
+    'tfma.PlotDataFieldNames.MULTI_CLASS_CONFUSION_MATRIX_DATA',
+    PlotDataFieldNames.MULTI_CLASS_CONFUSION_MATRIX_DATA);
+goog.exportSymbol(
+    'tfma.PlotDataFieldNames.MULTI_LABEL_CONFUSION_MATRIX_DATA',
+    PlotDataFieldNames.MULTI_LABEL_CONFUSION_MATRIX_DATA);
+goog.exportSymbol(
     'tfma.PlotDataFieldNames.PRECISION_RECALL_CURVE_DATA',
     PlotDataFieldNames.PRECISION_RECALL_CURVE_DATA);
 goog.exportSymbol(
@@ -192,8 +225,10 @@ goog.exportSymbol('tfma.PlotHighlight.WEIGHTS', PlotHighlight.WEIGHTS);
 goog.exportSymbol('tfma.PlotScale.LINEAR', PlotScale.LINEAR);
 goog.exportSymbol('tfma.PlotScale.LOG', PlotScale.LOG);
 
+goog.exportSymbol('tfma.PlotTypes.ACCURACY_CHARTS', PlotTypes.ACCURACY_CHARTS);
 goog.exportSymbol(
     'tfma.PlotTypes.CALIBRATION_PLOT', PlotTypes.CALIBRATION_PLOT);
+goog.exportSymbol('tfma.PlotTypes.GAIN_CHART', PlotTypes.GAIN_CHART);
 goog.exportSymbol(
     'tfma.PlotTypes.MACRO_PRECISION_RECALL_CURVE',
     PlotTypes.MACRO_PRECISION_RECALL_CURVE);
@@ -201,10 +236,17 @@ goog.exportSymbol(
     'tfma.PlotTypes.MICRO_PRECISION_RECALL_CURVE',
     PlotTypes.MICRO_PRECISION_RECALL_CURVE);
 goog.exportSymbol(
+    'tfma.PlotTypes.MULTI_CLASS_CONFUSION_MATRIX',
+    PlotTypes.MULTI_CLASS_CONFUSION_MATRIX);
+goog.exportSymbol(
+    'tfma.PlotTypes.MULTI_LABEL_CONFUSION_MATRIX',
+    PlotTypes.MULTI_LABEL_CONFUSION_MATRIX);
+goog.exportSymbol(
     'tfma.PlotTypes.PREDICTION_DISTRIBUTION',
     PlotTypes.PREDICTION_DISTRIBUTION);
 goog.exportSymbol(
     'tfma.PlotTypes.PRECISION_RECALL_CURVE', PlotTypes.PRECISION_RECALL_CURVE);
+goog.exportSymbol('tfma.PlotTypes.RESIDUAL_PLOT', PlotTypes.RESIDUAL_PLOT);
 goog.exportSymbol('tfma.PlotTypes.ROC_CURVE', PlotTypes.ROC_CURVE);
 goog.exportSymbol(
     'tfma.PlotTypes.WEIGHTED_PRECISION_RECALL_CURVE',
@@ -213,17 +255,24 @@ goog.exportSymbol(
 goog.exportSymbol('tfma.PlotDataDisplay.EXAMPLES_MAX_STEP',
     PlotDataDisplay.EXAMPLES_MAX_STEP);
 
+goog.exportSymbol('tfma.PLOT_KEYS_AND_VALUES', PLOT_KEYS_AND_VALUES);
+
+goog.exportSymbol('tfma.VALUE', VALUE);
+
 exports = {
   Column,
   Event,
   FLOATING_POINT_PRECISION,
+  KEY,
   MetricValueFormat,
   MetricValueFormatSpec,
   MetricValueTransformer,
+  METRIC_KEYS_AND_VALUES,
   PlotDataFieldNames,
   PlotFit,
   PlotHighlight,
   PlotScale,
   PlotTypes,
   PlotDataDisplay,
+  VALUE,
 };

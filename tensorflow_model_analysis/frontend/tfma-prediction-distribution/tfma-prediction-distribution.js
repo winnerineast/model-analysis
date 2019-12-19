@@ -13,56 +13,110 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-Polymer({
+import {PolymerElement} from '@polymer/polymer/polymer-element.js';
+import {template} from './tfma-prediction-distribution-template.html.js';
 
-  is: 'tfma-prediction-distribution',
+import '../tfma-google-chart-wrapper/tfma-google-chart-wrapper.js';
 
-  properties: {
-    /** @type {!Array<!Object>} */
-    data: {type: Array},
+/**
+ * tfma-prediciton-distribution renders the prediction distribution.
+ *
+ * @polymer
+ */
+export class PredicitonDistribution extends PolymerElement {
+  constructor() {
+    super();
+  }
 
-    /** @type {number} */
-    bucketSize: {type: Number, value: 0.0625},
+  static get is() {
+    return 'tfma-prediction-distribution';
+  }
 
-    /**
-     * Chart rendering options.
-     * @type {!Object}
-     * @private
-     */
-    options_: {
-      type: Object,
-      value: {
-        'hAxis': {'title': 'Prediction'},
-        'vAxis': {'title': 'Count'},
-        'series': {0: {'visibleInLegend': false}},
-        'explorer':
-            {actions: ['dragToPan', 'scrollToZoom', 'rightClickToReset']},
-      }
-    },
+  /** @return {!HTMLTemplateElement} */
+  static get template() {
+    return template;
+  }
 
-    /**
-     * The data to be plotted in the line chart.
-     * @private {!Array<!Array<string|number>>}
-     */
-    plotData_: {type: Array, computed: 'computePlotData_(data, bucketSize)'},
-  },
+  /** @return {!PolymerElementProperties} */
+  static get properties() {
+    return {
+      /** @type {!Array<!Object>} */
+      data: {type: Array},
+
+      /** @type {number} */
+      numberOfBuckets: {type: Number, value: 16},
+
+      /**
+       * Chart rendering options.
+       * @type {!Object}
+       * @private
+       */
+      options_: {
+        type: Object,
+        value: {
+          'hAxis': {'title': 'Prediction'},
+          'vAxes': {0: {'title': 'Positive'}, 1: {'title': 'Negative'}},
+          'series': {
+            0: {'visibleInLegend': false, 'type': 'bars'},
+            1: {
+              'visibleInLegend': true,
+              'targetAxisIndex': 1,
+              'type': 'scatter'
+            },
+            2: {
+              'visibleInLegend': true,
+              'targetAxisIndex': 0,
+              'type': 'scatter',
+              'pointShape': 'diamond'
+            },
+          },
+          'explorer': {actions: ['dragToZoom', 'rightClickToReset']},
+        }
+      },
+
+      /**
+       * The data to be plotted in the line chart.
+       * @private {!Array<!Array<string|number>>}
+       */
+      plotData_: {
+        type: Array,
+        computed: 'computePlotData_(data, numberOfBuckets)',
+      },
+    };
+  }
 
   /**
-   * @param {!Array<!Object>} data
-   * @param {number} bucketSize
-   * @return {!Array<!Array<string|number>>} A 2d array representing the data
-   *     that will be visualized in the prediciton distribution.
+   * @param {!Array<!Object>|undefined} data
+   * @param {number} numberOfBuckets
+   * @return {(!Array<!Array<string|number>>|undefined)} A 2d array representing
+   *     the data that will be visualized in the prediciton distribution.
    * @private
    */
-  computePlotData_: function(data, bucketSize) {
-    const plotData =
-        [['Prediction', 'Count', {'type': 'string', 'role': 'tooltip'}]];
-    let currentBucketCenter = bucketSize / 2;
+  computePlotData_(data, numberOfBuckets) {
+    if (!data) {
+      return undefined;
+    }
+
+    const minValue = data && data[0] && data[0]['upperThresholdExclusive'] || 0;
+    const maxValue = data && data[data.length - 1] &&
+            data[data.length - 1]['lowerThresholdInclusive'] ||
+        0;
+    const bucketSize = (maxValue - minValue) / numberOfBuckets || 1;
+    const plotData = [[
+      'Prediction',
+      'Count',
+      {'type': 'string', 'role': 'tooltip'},
+      'Positive',
+      {'type': 'string', 'role': 'tooltip'},
+      'Negative',
+      {'type': 'string', 'role': 'tooltip'},
+    ]];
+    let currentBucketCenter = minValue + bucketSize / 2;
     do {
       // Initialize histogram with center x and zero count.
-      plotData.push([currentBucketCenter, 0]);
+      plotData.push([currentBucketCenter, 0, '', 0, '', 0, '']);
       currentBucketCenter += bucketSize;
-    } while (currentBucketCenter < 1);
+    } while (currentBucketCenter < maxValue);
 
     const maxIndex = plotData.length - 1;
     // For each entry, find the corresponding prediction and update weighted
@@ -71,23 +125,32 @@ Polymer({
     data.forEach((entry) => {
       const weightedExamples = entry['numWeightedExamples'];
       if (weightedExamples) {
+        const totalLabel = entry['totalWeightedLabel'] || 0;
         const prediction =
             entry['totalWeightedRefinedPrediction'] / weightedExamples;
-        const bucketIndex =
-            Math.min(Math.trunc(prediction / bucketSize) + 1, maxIndex);
+        const bucketIndex = Math.min(
+            Math.trunc((prediction - minValue) / bucketSize) + 1, maxIndex);
         plotData[bucketIndex][1] = plotData[bucketIndex][1] + weightedExamples;
+        plotData[bucketIndex][3] = plotData[bucketIndex][3] + totalLabel;
+        plotData[bucketIndex][5] =
+            plotData[bucketIndex][5] + weightedExamples - totalLabel;
       }
     });
 
     // Fill tooltip
-    let lowerBound = 0;
-    let upperBound = bucketSize;
+    let lowerBound = minValue;
+    let upperBound = minValue + bucketSize;
     for (let i = 1; i < plotData.length; i++) {
-      plotData[i][2] = plotData[i][1] + ' weighted example(s) between ' +
-          lowerBound.toFixed(4) + ' and ' + upperBound.toFixed(4);
+      const boundText = ' example(s) between ' + lowerBound.toFixed(4) +
+          ' and ' + upperBound.toFixed(4);
+      plotData[i][2] = plotData[i][1] + ' weighted' + boundText;
+      plotData[i][4] = plotData[i][3] + ' positive' + boundText;
+      plotData[i][6] = plotData[i][5] + ' negative' + boundText;
       lowerBound = upperBound;
       upperBound += bucketSize;
     }
     return plotData;
-  },
-});
+  }
+}
+
+customElements.define('tfma-prediction-distribution', PredicitonDistribution);

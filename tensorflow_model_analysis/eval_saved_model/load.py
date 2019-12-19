@@ -15,129 +15,211 @@
 
 from __future__ import absolute_import
 from __future__ import division
-
+# Standard __future__ imports
 from __future__ import print_function
 
-import collections
-
+# Standard Imports
+import numpy as np
 import tensorflow as tf
 from tensorflow_model_analysis import types
-from tensorflow_model_analysis import util as general_util
+from tensorflow_model_analysis.eval_metrics_graph import eval_metrics_graph
 from tensorflow_model_analysis.eval_saved_model import constants
 from tensorflow_model_analysis.eval_saved_model import encoding
 from tensorflow_model_analysis.eval_saved_model import graph_ref
 from tensorflow_model_analysis.eval_saved_model import util
-from tensorflow_model_analysis.types_compat import Any, Dict, List, NamedTuple, Optional, Tuple  # pytype: disable=not-supported-yet
+from typing import Any, Dict, Generator, List, NamedTuple, Optional, Text, Tuple, Union
 
 from tensorflow.core.protobuf import meta_graph_pb2
 
-FeaturesPredictionsLabels = NamedTuple(  # pylint: disable=invalid-name
-    'FeaturesPredictionsLabels',
-    [('features', types.DictOfFetchedTensorValues),
-     ('predictions', types.DictOfFetchedTensorValues),
-     ('labels', types.DictOfFetchedTensorValues)])
+# pylint: disable=invalid-name
+# Type used to feed a single input to the model. This will be converted to a
+# MultipleInputFeedType using a batch of size one.
+SingleInputFeedType = Union[bytes, Dict[bytes, Any]]
+# Type used to feed a batch of inputs to the model. This should match the values
+# expected by the receiver_tensor placeholders used with the EvalInputReceiver.
+# Typically this will be a batch of serialized `tf.train.Example` protos.
+MultipleInputFeedType = Union[List[bytes], Dict[bytes, List[Any]]]
+# Type used to return the tensor values fetched from the model.
+FetchedTensorValues = NamedTuple(
+    'FetchedTensorValues',
+    [
+        ('input_ref', int),
+        # Dict is keyed by group ('features', 'predictions', 'labels', etc).
+        ('values', Dict[Text, types.TensorValueMaybeDict])
+    ])
+
+# pylint: enable=invalid-name
 
 
-class EvalSavedModel(object):
-  """Abstraction for using a EvalSavedModel."""
+class EvalSavedModel(eval_metrics_graph.EvalMetricsGraph):
+  """Abstraction for using a EvalSavedModel.
 
-  def __init__(self, path):
+  Note that this class overrides eval_metrics_graph.EvalMetricsGraph
+  which contains most of the functionality for handling the metric ops.
+  In the eval saved model path, a common graph is shared between generation
+  FeaturesPredictionLabels through Predict and doing the metric ops.
+  The specific methods of this class constructs the graph and handles
+  the prediction ops.
+  """
+
+  def __init__(self,
+               path: Text,
+               include_default_metrics: Optional[bool] = True,
+               additional_fetches: Optional[List[Text]] = None,
+               blacklist_feature_fetches: Optional[List[Text]] = None,
+               tags: Optional[List[Text]] = None):
+    """Initializes EvalSavedModel.
+
+    Args:
+      path: Path to model.
+      include_default_metrics: True to include the in-graph metrics by default.
+      additional_fetches: Prefixes of additional tensors stored in
+        signature_def.inputs that should be fetched at prediction time. The
+        "features" and "labels" tensors are handled automatically and should not
+        be included in this list.
+      blacklist_feature_fetches: List of tensor names in the features dictionary
+        which should be excluded from the fetches request. This is useful in
+        scenarios where features are large (e.g. images) and can lead to
+        excessive memory use if stored.
+      tags: Tags to use when loading the saved model.
+
+    Raises:
+      ValueError: If "features" or "labels" included in additional_fetches.
+    """
     self._path = path
-    self._graph = tf.Graph()
-    self._session = tf.Session(graph=self._graph)
-    try:
-      self._load_and_parse_graph()
-    except (RuntimeError, ValueError) as exception:
-      general_util.reraise_augmented(exception,
-                                     'for saved_model at path %s' % self._path)
+    self._include_default_metrics = include_default_metrics
+    if additional_fetches:
+      if constants.FEATURES_NAME in additional_fetches:
+        raise ValueError('additional_fetches should not contain "features"')
+      if constants.LABELS_NAME in additional_fetches:
+        raise ValueError('additional_fetches should not contain "labels"')
+    self._additional_fetches = additional_fetches
+    self._blacklist_feature_fetches = blacklist_feature_fetches
+    if tags:
+      self._tags = tags
+    else:
+      self._tags = [constants.EVAL_TAG]
+    super(EvalSavedModel, self).__init__()
 
-  def _check_version(self, meta_graph_def):
-    version = meta_graph_def.collection_def.get(
-        encoding.TFMA_VERSION_COLLECTION)
-    if version is None:
-      raise ValueError(
-          'could not find TFMA version in graph (at path %s)' % self._path)
+  def _check_version(self, version_node: types.TensorType):
+    version = self._session.run(version_node)
+    if not version:
+      raise ValueError('invalid TFMA version in graph (at path %s)' %
+                       self._path)
     # We don't actually do any checking for now, since we don't have any
     # compatibility issues.
 
-  def _load_and_parse_graph(self):
+  # TODO(b/119308261): Remove once all exported EvalSavedModels are updated.
+  def _legacy_check_version(self, meta_graph_def: meta_graph_pb2.MetaGraphDef):
+    version = meta_graph_def.collection_def.get(
+        encoding.TFMA_VERSION_COLLECTION)
+    if version is None:
+      raise ValueError('could not find TFMA version in graph (at path %s)' %
+                       self._path)
+    # We don't actually do any checking for now, since we don't have any
+    # compatibility issues.
+
+  def _get_op_from_tensor(self, op_name_tensor: types.TensorType):
+    """Returns the operation based on name stored in a tensor."""
+    if op_name_tensor is None:
+      return None
+    op_name = self._session.run(op_name_tensor).decode('utf-8')
+    return self._graph.get_operation_by_name(op_name)
+
+  def _iterate_fpl_maps_in_canonical_order(
+      self
+  ) -> Generator[Tuple[Text, types.FPLKeyType, types.TensorType], None, None]:
+    """Iterate through features, predictions, labels maps in canonical order.
+
+    We need to fix a canonical order because to use `make_callable`, we must use
+    a list for feeding Tensor values. This means we need to generate the
+    values to feed in the same order that we generated the list of parameters
+    for `make_callable`.
+
+    Each of features_map, predictions_map, and labels_map are OrderedDicts,
+    so the iteration order is stable.
+
+    The map names returned are chosen to correspond to the fields of
+    FeaturesPredictionsLabels, so callers can do getattr(fpl, map_name) to
+    get the corresponding field.
+
+    Yields:
+      Tuples of (map name, map key, map value)
+    """
+    for feature_key, feature_value in self._features_map.items():
+      yield 'features', feature_key, feature_value  # pytype: disable=bad-return-type
+    for prediction_key, prediction_value in self._predictions_map.items():
+      yield 'predictions', prediction_key, prediction_value  # pytype: disable=bad-return-type
+    for label_key, label_value in self._labels_map.items():
+      yield 'labels', label_key, label_value  # pytype: disable=bad-return-type
+
+  def _construct_graph(self):
     """Actually load and parse the graph.
 
     This is factored out from __init__ in case we want to support delayed-loads
     in the future.
 
     Raises:
-      ValueError: Could not find signature keyed with EVAL_TAG; or
-        signature_def did not have exactly one input; or there was a signature
-        output with the metric prefix but an unrecognised suffix.
+      ValueError: Could not find signature keyed with
+        DEFAULT_EVAL_SIGNATURE_DEF_KEY; or signature_def did not have exactly
+        one input; or there was a signature output with the metric prefix but an
+        unrecognised suffix.
     """
-    meta_graph_def = tf.saved_model.loader.load(
-        self._session, [constants.EVAL_TAG], self._path)
+    meta_graph_def = tf.compat.v1.saved_model.loader.load(
+        self._session, self._tags, self._path)
 
-    self._check_version(meta_graph_def)
     with self._graph.as_default():
-      signature_def = meta_graph_def.signature_def.get(constants.EVAL_TAG)
+      signature_def = meta_graph_def.signature_def.get(
+          constants.DEFAULT_EVAL_SIGNATURE_DEF_KEY)
       if signature_def is None:
         raise ValueError('could not find signature with name %s. signature_def '
                          'was %s' % (constants.EVAL_TAG, signature_def))
 
-      # Note that there are two different encoding schemes in use here:
+      self._additional_fetches_map = {}
+      iterator_initializer = None
+
+      # If features and labels are not stored in the signature_def.inputs then
+      # only a single input will be present. We will use this as our flag to
+      # indicate whether the features and labels should be read using the legacy
+      # collections or using new signature_def.inputs.
+      # TODO(b/119308261): Remove once all exported EvalSavedModels are updated.
+      if len(signature_def.inputs) == 1:
+        self._legacy_check_version(meta_graph_def)
+        self._input_map, self._input_refs_node = graph_ref.load_legacy_inputs(
+            meta_graph_def, signature_def, self._graph)
+        self._features_map, self._labels_map = (
+            graph_ref.load_legacy_features_and_labels(meta_graph_def,
+                                                      self._graph))
+      else:
+        self._check_version(
+            graph_ref.load_tfma_version(signature_def, self._graph))
+        self._input_map, self._input_refs_node = graph_ref.load_inputs(
+            signature_def, self._graph)
+        self._features_map = graph_ref.load_additional_inputs(
+            constants.FEATURES_NAME, signature_def, self._graph)
+        if self._blacklist_feature_fetches:
+          for feature_name in self._blacklist_feature_fetches:
+            self._features_map.pop(feature_name, None)
+        self._labels_map = graph_ref.load_additional_inputs(
+            constants.LABELS_NAME, signature_def, self._graph)
+        if self._additional_fetches:
+          for prefix in self._additional_fetches:
+            self._additional_fetches_map[prefix] = (
+                graph_ref.load_additional_inputs(prefix, signature_def,
+                                                 self._graph))
+        iterator_initializer = self._get_op_from_tensor(
+            graph_ref.load_iterator_initializer_name(signature_def,
+                                                     self._graph))
+
+      self._predictions_map = graph_ref.load_predictions(
+          signature_def, self._graph)
+
+      # Create feed_list for metrics_reset_update_get_fn
       #
-      # 1. The scheme used by TFMA for the TFMA-specific extra collections
-      #    for the features and labels.
-      # 2. The scheme used by TensorFlow Estimators in the SignatureDefs for the
-      #    input example node, predictions, metrics and so on.
-
-      # Features and labels are in TFMA-specific extra collections.
-      self._features_map = graph_ref.get_node_map_in_graph(
-          meta_graph_def, encoding.FEATURES_COLLECTION, [encoding.NODE_SUFFIX],
-          self._graph)
-      self._labels_map = graph_ref.get_node_map_in_graph(
-          meta_graph_def, encoding.LABELS_COLLECTION, [encoding.NODE_SUFFIX],
-          self._graph)
-
-      if len(signature_def.inputs) != 1:
-        raise ValueError('there should be exactly one input. signature_def '
-                         'was: %s' % signature_def)
-
-      # The input node, predictions and metrics are in the signature.
-      input_node = list(signature_def.inputs.values())[0]
-      self._input_example_node = (
-          tf.saved_model.utils.get_tensor_from_tensor_info(
-              input_node, self._graph))
-
-      predictions = graph_ref.extract_signature_outputs_with_prefix(
-          constants.PREDICTIONS_NAME, signature_def.outputs)
-      predictions_map = {}
-      for k, v in predictions.items():
-        # Extract to dictionary with a single key for consistency with
-        # how features and labels are extracted.
-        predictions_map[k] = {
-            encoding.NODE_SUFFIX:
-                tf.saved_model.utils.get_tensor_from_tensor_info(
-                    v, self._graph)
-        }
-      self._predictions_map = predictions_map
-
-      metrics = graph_ref.extract_signature_outputs_with_prefix(
-          constants.METRICS_NAME, signature_def.outputs)
-      metrics_map = collections.defaultdict(dict)
-      for k, v in metrics.items():
-        node = tf.saved_model.utils.get_tensor_from_tensor_info(v, self._graph)
-
-        if k.endswith('/' + constants.METRIC_VALUE_SUFFIX):
-          key = k[:-len(constants.METRIC_VALUE_SUFFIX) - 1]
-          metrics_map[key][encoding.VALUE_OP_SUFFIX] = node
-        elif k.endswith('/' + constants.METRIC_UPDATE_SUFFIX):
-          key = k[:-len(constants.METRIC_UPDATE_SUFFIX) - 1]
-          metrics_map[key][encoding.UPDATE_OP_SUFFIX] = node
-        else:
-          raise ValueError('unrecognised suffix for metric. key was: %s' % k)
-
-      metric_ops = {}
-      for metric_name, ops in metrics_map.items():
-        metric_ops[metric_name] = (ops[encoding.VALUE_OP_SUFFIX],
-                                   ops[encoding.UPDATE_OP_SUFFIX])
+      # We need to save this because we need to update the
+      # metrics_reset_update_get_fn when additional metric ops are registered
+      # (the feed_list will stay the same though).
+      self._perform_metrics_update_fn_feed_list = list(self._input_map.values())
 
       self._metric_names = []
       self._metric_value_ops = []
@@ -145,55 +227,41 @@ class EvalSavedModel(object):
       self._metric_variable_nodes = []
       self._metric_variable_placeholders = []
       self._metric_variable_assign_ops = []
-      self.register_additional_metric_ops(metric_ops)
 
-  def graph_as_default(self):
-    return self._graph.as_default()
+      if self._include_default_metrics:
+        metrics_map = graph_ref.load_metrics(signature_def, self._graph)
+        metric_ops = {}
+        for metric_name, ops in metrics_map.items():
+          metric_ops[metric_name] = (ops[encoding.VALUE_OP_SUFFIX],
+                                     ops[encoding.UPDATE_OP_SUFFIX])
+        self.register_additional_metric_ops(metric_ops)
 
-  def register_additional_metric_ops(
-      self, metric_ops):
-    """Register additional metric ops that were added.
-
-    Args:
-      metric_ops: Dictionary of metric ops, just like in the Trainer.
-
-    Raises:
-      ValueError: One or more of the metric ops already exist in the graph.
-    """
-    for metric_name, (value_op, update_op) in metric_ops.items():
-      if metric_name in self._metric_names:
-        raise ValueError('tried to register new metric with name %s, but a '
-                         'metric with that name already exists.' % metric_name)
-      self._metric_names.append(metric_name)
-      self._metric_value_ops.append(value_op)
-      self._metric_update_ops.append(update_op)
-
-    # Update metric variables incrementally with only the new elements in the
-    # metric_variables collection.
-    collection = self._graph.get_collection(tf.GraphKeys.METRIC_VARIABLES)
-    collection = collection[len(self._metric_variable_nodes):]
-
-    # Note that this is a node_list - it's not something that TFMA
-    # configures, but something that TF.Learn configures.
-    #
-    # As such, we also use graph.get_tensor_by_name directly, instead of
-    # TFMA's version which expects names encoded by TFMA.
-    for node in collection:
-      self._metric_variable_nodes.append(node)
-      with self._graph.as_default():
-        placeholder = tf.placeholder(dtype=node.dtype, shape=node.get_shape())
-        self._metric_variable_placeholders.append(placeholder)
-        self._metric_variable_assign_ops.append(tf.assign(node, placeholder))
-
-    with self._graph.as_default():
-      self._all_metric_variable_assign_ops = tf.group(
-          *self._metric_variable_assign_ops)
-      self._all_metric_update_ops = tf.group(*self._metric_update_ops)
-      self._reset_variables_op = tf.local_variables_initializer()
-      self._session.run(self._reset_variables_op)
+      # Make callable for predict_list. The callable for
+      # metrics_reset_update_get is updated in register_additional_metric_ops.
+      # Repeated calls to a callable made using make_callable are faster than
+      # doing repeated calls to session.run.
+      if iterator_initializer:
+        # When iterator is used, the initializer is used to feed the inputs. The
+        # values are then fetched by repeated calls to the predict_list_fn until
+        # OutOfRange is thrown.
+        self._iterator_initializer_fn = self._session.make_callable(
+            fetches=(iterator_initializer),
+            feed_list=list(self._input_map.values()))
+        self._predict_list_fn = self._session.make_callable(
+            fetches=(self._features_map, self._predictions_map,
+                     self._labels_map, self._input_refs_node,
+                     self._additional_fetches_map))
+      else:
+        self._iterator_initializer_fn = None
+        self._predict_list_fn = self._session.make_callable(
+            fetches=(self._features_map, self._predictions_map,
+                     self._labels_map, self._input_refs_node,
+                     self._additional_fetches_map),
+            feed_list=list(self._input_map.values()))
 
   def get_features_predictions_labels_dicts(
-      self):
+      self) -> Tuple[types.TensorTypeMaybeDict, types.TensorTypeMaybeDict, types
+                     .TensorTypeMaybeDict]:
     """Returns features, predictions, labels dictionaries (or values).
 
     The dictionaries contain references to the nodes, so they can be used
@@ -205,263 +273,150 @@ class EvalSavedModel(object):
     """
     features = {}
     for key, value in self._features_map.items():
-      features[key] = value[encoding.NODE_SUFFIX]
+      features[key] = value
+    # Unnest if it wasn't a dictionary to begin with.
+    features = util.extract_tensor_maybe_dict(constants.FEATURES_NAME, features)
 
     predictions = {}
     for key, value in self._predictions_map.items():
-      predictions[key] = value[encoding.NODE_SUFFIX]
+      predictions[key] = value
     # Unnest if it wasn't a dictionary to begin with.
-    if predictions.keys() == [encoding.DEFAULT_PREDICTIONS_DICT_KEY]:
-      predictions = predictions[encoding.DEFAULT_PREDICTIONS_DICT_KEY]
+    predictions = util.extract_tensor_maybe_dict(constants.PREDICTIONS_NAME,
+                                                 predictions)
 
     labels = {}
     for key, value in self._labels_map.items():
-      labels[key] = value[encoding.NODE_SUFFIX]
+      labels[key] = value
     # Unnest if it wasn't a dictionary to begin with.
-    if labels.keys() == [encoding.DEFAULT_LABELS_DICT_KEY]:
-      labels = labels[encoding.DEFAULT_LABELS_DICT_KEY]
+    labels = util.extract_tensor_maybe_dict(constants.LABELS_NAME, labels)
 
     return (features, predictions, labels)
 
-  def predict(self, input_example_bytes):
-    """Feed an example, get features, predictions, labels.
+  def predict(self,
+              single_input: SingleInputFeedType) -> List[FetchedTensorValues]:
+    """Returns fetches (features, predictions, labels, etc) for single_input.
 
     Args:
-      input_example_bytes: Bytes to feed the input example with. Could be a
-        serialised tf.Example, a CSV row, JSON data, or something else depending
-        on what the model's input_fn was configured to ingest.
+      single_input: Data to use to feed the input tensors. This must align with
+        the receiver_tensors passed to EvalInputReceiver. For example, if
+        receiver_tensors was a placeholder for parsing `tf.train.Example`
+        protos, then this will be a serialised `tf.train.Example`.
 
     Returns:
-      FeaturesPredictionsLabels.
+      A list of FetchedTensorValues (one per example used by model). In most
+      cases a single input will result in one example and the returned list will
+      contain only one element, but in some cases (e.g. where examples are
+      dynamically decoded and generated within the graph), the single input
+      might result in zero to many examples).
     """
-    (features, predictions, labels) = self._session.run(
-        fetches=(self._features_map, self._predictions_map, self._labels_map),
-        feed_dict={
-            self._input_example_node: [input_example_bytes]
-        })
-    return FeaturesPredictionsLabels(
-        features=features, predictions=predictions, labels=labels)
+    return self.predict_list([single_input])
 
-  def predict_list(self, input_example_bytes_list
-                  ):
-    """Like predict, but takes a list of examples."""
-    (features, predictions, labels) = self._session.run(
-        fetches=(self._features_map, self._predictions_map, self._labels_map),
-        feed_dict={
-            self._input_example_node: input_example_bytes_list,
-        })
+  def predict_list(self,
+                   inputs: MultipleInputFeedType) -> List[FetchedTensorValues]:
+    """Like predict, but takes a list of inputs.
 
-    split_labels = {}
-    for label_key in self._labels_map:
-      split_labels[label_key] = util.split_tensor_value(
-          labels[label_key][encoding.NODE_SUFFIX])
-    split_features = {}
-    for feature_key in self._features_map:
-      split_features[feature_key] = util.split_tensor_value(
-          features[feature_key][encoding.NODE_SUFFIX])
-    split_predictions = {}
-    for prediction_key in self._predictions_map:
-      split_predictions[prediction_key] = util.split_tensor_value(
-          predictions[prediction_key][encoding.NODE_SUFFIX])
+    Args:
+      inputs: A list of input data (or a dict of keys to lists of input data).
+        See predict for more details.
+
+    Returns:
+       A list of FetchedTensorValues. See predict for more details.
+
+    Raises:
+      ValueError: If the original input_refs tensor passed to the
+        EvalInputReceiver does not align with the features, predictions and
+        labels returned after feeding the inputs.
+    """
+    if isinstance(inputs, dict):
+      input_args = []
+      # Only add values for keys that are in the input map (in order).
+      for key in self._input_map:
+        if key in inputs:
+          input_args.append(inputs[key])
+    else:
+      input_args = [inputs]
+
+    if self._iterator_initializer_fn:
+      self._iterator_initializer_fn(*input_args)
+      input_args = []
 
     result = []
-    for i in range(len(input_example_bytes_list)):
-      labels = {}
-      for label_key in self._labels_map:
-        labels[label_key] = {encoding.NODE_SUFFIX: split_labels[label_key][i]}
-      features = {}
-      for feature_key in self._features_map:
-        features[feature_key] = {
-            encoding.NODE_SUFFIX: split_features[feature_key][i]
-        }
-      predictions = {}
-      for prediction_key in self._predictions_map:
-        predictions[prediction_key] = {
-            encoding.NODE_SUFFIX: split_predictions[prediction_key][i]
-        }
-      result.append(
-          FeaturesPredictionsLabels(
-              features=features, predictions=predictions, labels=labels))
 
-    return result
-
-  def _create_feed_for_features_predictions_labels(
-      self, features_predictions_labels
-  ):
-    """Create feed dict for feeding the given features, predictions, labels."""
-    feed_dict = {}
-    for label_key, label_dict in self._labels_map.items():
-      feed_dict[label_dict[encoding.NODE_SUFFIX]] = (
-          features_predictions_labels.labels[label_key][encoding.NODE_SUFFIX])
-    for feature_key, feature_dict in self._features_map.items():
-      feed_dict[feature_dict[encoding.NODE_SUFFIX]] = (
-          features_predictions_labels.features[feature_key][
-              encoding.NODE_SUFFIX])
-    for prediction_key, prediction_dict in self._predictions_map.items():
-      feed_dict[prediction_dict[encoding.NODE_SUFFIX]] = (
-          features_predictions_labels.predictions[prediction_key][
-              encoding.NODE_SUFFIX])
-    return feed_dict
-
-  def _create_feed_for_features_predictions_labels_list(
-      self, features_predictions_labels_list
-  ):
-    """Create feed dict for feeding a list of features, predictions, labels."""
-    result = {}
-    for label_key, label_dict in self._labels_map.items():
-      result[label_dict[encoding.NODE_SUFFIX]] = util.merge_tensor_values([
-          fpl.labels[label_key][encoding.NODE_SUFFIX]
-          for fpl in features_predictions_labels_list
-      ])
-    for feature_key, feature_dict in self._features_map.items():
-      result[feature_dict[encoding.NODE_SUFFIX]] = util.merge_tensor_values([
-          fpl.features[feature_key][encoding.NODE_SUFFIX]
-          for fpl in features_predictions_labels_list
-      ])
-    for prediction_key, prediction_dict in self._predictions_map.items():
-      result[prediction_dict[encoding.NODE_SUFFIX]] = (
-          util.merge_tensor_values([
-              fpl.predictions[prediction_key][encoding.NODE_SUFFIX]
-              for fpl in features_predictions_labels_list
-          ]))
-    return result
-
-  def perform_metrics_update(
-      self, features_predictions_labels):
-    """Run a single metrics update step on a single FPL."""
-    feed_dict = self._create_feed_for_features_predictions_labels(
-        features_predictions_labels)
-    try:
-      self._session.run(
-          fetches=self._all_metric_update_ops, feed_dict=feed_dict)
-    except (RuntimeError, TypeError, ValueError) as exception:
-      general_util.reraise_augmented(
-          exception, 'features_predictions_labels = %s, feed_dict = %s' %
-          (features_predictions_labels, feed_dict))
-
-  def metrics_reset_update_get(
-      self,
-      features_predictions_labels):
-    """Run the metrics reset, update, get operations on a single FPL."""
-    self.reset_metric_variables()
-    feed_dict = self._create_feed_for_features_predictions_labels(
-        features_predictions_labels)
-    try:
-      [_, result] = self._session.run(
-          fetches=[self._all_metric_update_ops, self._metric_variable_nodes],
-          feed_dict=feed_dict)
-    except (RuntimeError, TypeError, ValueError) as exception:
-      general_util.reraise_augmented(
-          exception, 'features_predictions_labels = %s, feed_dict = %s' %
-          (features_predictions_labels, feed_dict))
-    return result
-
-  def metrics_reset_update_get_list(
-      self, features_predictions_labels_list
-  ):
-    """Run the metrics reset, update, get operations on a list of FPLs."""
-    self.reset_metric_variables()
-
-    feed_dict = self._create_feed_for_features_predictions_labels_list(
-        features_predictions_labels_list)
-    try:
-      [_, result] = self._session.run(
-          fetches=[self._all_metric_update_ops, self._metric_variable_nodes],
-          feed_dict=feed_dict)
-    except (RuntimeError, TypeError, ValueError) as exception:
-      general_util.reraise_augmented(
-          exception, 'features_predictions_labels_list = %s, feed_dict = %s' %
-          (features_predictions_labels_list, feed_dict))
-
-    return result
-
-  def get_metric_variables(self):
-    """Returns a list containing the metric variable values."""
-    result = self._session.run(fetches=self._metric_variable_nodes)
-    return result
-
-  def _create_feed_for_metric_variables(
-      self, metric_variable_values):
-    """Returns a feed dict for feeding metric variables values to set them.
-
-    Args:
-      metric_variable_values: Metric variable values retrieved using
-        get_metric_variables, for instance.
-
-    Returns:
-      A feed dict for feeding metric variables values to the placeholders
-      constructed for setting the metric variable values to the fed values.
-    """
-    result = {}
-    for node, value in zip(self._metric_variable_placeholders,
-                           metric_variable_values):
-      result[node] = value
-    return result
-
-  def set_metric_variables(self, metric_variable_values):
-    """Set metric variable values to the given values."""
-    self._session.run(
-        fetches=self._all_metric_variable_assign_ops,
-        feed_dict=self._create_feed_for_metric_variables(
-            metric_variable_values))
-
-  def reset_metric_variables(self):
-    """Reset metric variable values to their initial values."""
-    self._session.run(self._reset_variables_op)
-
-  def get_metric_values(self):
-    """Retrieve metric values."""
-    metric_values = self._session.run(fetches=self._metric_value_ops)
-    return dict(zip(self._metric_names, metric_values))
-
-  def check_metric_compatibility(self, input_example_bytes
-                                ):
-    """Checks for metrics that cannot be evaluated using EvalSavedModel.
-
-    These may be metrics that violate the "separation property" - we can
-    only evaluate metrics that have the following properties, among others:
-      (a) update_op only needs predictions, labels, features
-      (b) value_op needs NO fetches
-
-    Note that this check only checks that the above properties are probably
-    satisfied. Some other properties that metrics should have but are not
-    checked here include:
-      - Metrics should add all their state variables to the METRIC_VARIABLES
-        collection.
-      - The state variables should be combined using addition, i.e. calling
-        update_op twice on examples X and Y should be equivalent to calling
-        update_op on X, saving the metric variables, independently calling
-        update_on on Y, saving the metric variables, and adding the two sets
-        of metric variables together.
-
-    Args:
-      input_example_bytes: Bytes to feed the input example with. Could be a
-        serialised tf.Example, a CSV row, JSON data, or something else depending
-        on what the model's input_fn was configured to ingest.
-
-    Returns:
-      Dictionary mapping metric names to Tuple(compatible, errors if any).
-    """
-    result = {}
-    for metric_name in self._metric_names:
-      result[metric_name] = (True, None)
-
-    features_predictions_labels = self.predict(input_example_bytes)
-    feed_dict = self._create_feed_for_features_predictions_labels(
-        features_predictions_labels)
-
-    for metric_name, update_op in zip(self._metric_names,
-                                      self._metric_update_ops):
+    while True:
       try:
-        self._session.run(fetches=update_op, feed_dict=feed_dict)
-      except tf.errors.InvalidArgumentError as e:
-        result[metric_name] = (False, 'update_op failed: %s' % e)
+        (features, predictions, labels, input_refs,
+         additional_fetches) = self._predict_list_fn(*input_args)
 
-    for metric_name, value_op in zip(self._metric_names,
-                                     self._metric_value_ops):
-      try:
-        self._session.run(fetches=value_op)
-      except tf.errors.InvalidArgumentError:
-        result[metric_name] = (False, 'value_op failed: %s' % e)
+        all_fetches = additional_fetches
+        all_fetches[constants.FEATURES_NAME] = features
+        all_fetches[constants.LABELS_NAME] = labels
+        all_fetches[constants.PREDICTIONS_NAME] = predictions
+
+        # TODO(cyfoo): Optimise this.
+        split_fetches = {}
+        for group, tensors in all_fetches.items():
+          split_tensors = {}
+          for key in tensors:
+            if not np.isscalar(tensors[key]):
+              split_tensors[key] = util.split_tensor_value(tensors[key])
+          split_fetches[group] = split_tensors
+
+        if (not isinstance(input_refs, np.ndarray) or input_refs.ndim != 1 or
+            not np.issubdtype(input_refs.dtype, np.integer)):
+          raise ValueError('input_refs should be an 1-D array of integers. '
+                           'input_refs was {}.'.format(input_refs))
+
+        for group, tensors in split_fetches.items():
+          for result_key, split_values in tensors.items():
+            if len(split_values) != input_refs.shape[0]:
+              raise ValueError(
+                  'input_refs should be batch-aligned with fetched values; '
+                  '{} key {} had {} slices but input_refs had batch size of '
+                  '{}'.format(group, result_key, len(split_values),
+                              input_refs.shape[0]))
+
+        for i, input_ref in enumerate(input_refs):
+          if input_ref < 0 or input_ref >= len(inputs):
+            raise ValueError(
+                'An index in input_refs is out of range: {} vs {}; '
+                'inputs: {}'.format(input_ref, len(inputs), inputs))
+          values = {}
+          for group, split_tensors in split_fetches.items():
+            tensor_values = {}
+            for key, split_value in split_tensors.items():
+              tensor_values[key] = split_value[i]
+            values[group] = util.extract_tensor_maybe_dict(group, tensor_values)
+
+          result.append(FetchedTensorValues(input_ref=input_ref, values=values))
+
+        if self._iterator_initializer_fn is None:
+          break
+      except tf.errors.OutOfRangeError:
+        break
 
     return result
+
+  def as_features_predictions_labels(self,
+                                     fetched_values: List[FetchedTensorValues]
+                                    ) -> List[types.FeaturesPredictionsLabels]:
+    """Gets features, predictions, labels as FeaturesPredictionsLabelsType."""
+
+    def fpl_dict(fetched: FetchedTensorValues,
+                 group: Text) -> types.DictOfFetchedTensorValues:
+      native = fetched.values[group]
+      wrapped = {}
+      if not isinstance(native, dict):
+        native = {util.default_dict_key(group): native}
+      for key in native:
+        wrapped[key] = {encoding.NODE_SUFFIX: native[key]}
+      return wrapped
+
+    fpls = []
+    for fetched in fetched_values:
+      fpls.append(
+          types.FeaturesPredictionsLabels(
+              input_ref=fetched.input_ref,
+              features=fpl_dict(fetched, constants.FEATURES_NAME),
+              predictions=fpl_dict(fetched, constants.PREDICTIONS_NAME),
+              labels=fpl_dict(fetched, constants.LABELS_NAME)))
+    return fpls

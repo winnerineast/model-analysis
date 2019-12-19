@@ -13,51 +13,82 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-Polymer({
-  is: 'tfma-confusion-matrix-at-thresholds',
-  properties: {
-    /**
-     * The serialized data.
-     * @type {string}
-     */
-    data: {type: String},
-    /**
-     * An array of data transformed from the data string.
-     * @private {!Array<!Object>}
-     */
-    transformedData_:
-        {type: Array, computed: 'computeTransformedData_(data, expanded)'},
+import {PolymerElement} from '@polymer/polymer/polymer-element.js';
+import {template} from './tfma-confusion-matrix-at-thresholds-template.html.js';
 
-    /**
-     * Whether the component can be expanded.
-     * @private {boolean}
-     */
-    expandable_: {
-      type: Boolean,
-      computed: 'computeExpandable_(transformedData_, interactive)'
-    },
+/**
+ * @const {string}
+ * @private
+ */
+const TAG_NAME_ = 'tfma-confusion-matrix-at-thresholds';
 
-    /**
-     * The data to display.
-     * @private {!Array<!Object>}
-     */
-    displayedData_: {
-      type: Array,
-      computed: 'computeDisplayedData_(transformedData_, expandable_, expanded)'
-    },
+/**
+ * tfma-confusion-matrix-at-thresholds renders a confusion matrix at a given
+ * threshold.
+ *
+ * @polymer
+ */
+export class ConfusionMatrixAtThresholds extends PolymerElement {
+  constructor() {
+    super();
+  }
 
-    /**
-     * Whether the metric is expanded.
-     * @type {boolean}
-     */
-    expanded: {type: Boolean, value: false, reflectToAttribute: true},
+  static get is() {
+    return TAG_NAME_;
+  }
 
-    /**
-     * Whether this component is interactive or not.
-     * @type {boolean}
-     */
-    interactive: {type: Boolean, value: true},
-  },
+  /** @return {!HTMLTemplateElement} */
+  static get template() {
+    return template;
+  }
+
+  /** @return {!PolymerElementProperties} */
+  static get properties() {
+    return {
+      /**
+       * The serialized data.
+       * @type {string}
+       */
+      data: {type: String},
+      /**
+       * An array of data transformed from the data string.
+       * @private {!Array<!Object>}
+       */
+      transformedData_:
+          {type: Array, computed: 'computeTransformedData_(data, expanded)'},
+
+      /**
+       * Whether the component can be expanded.
+       * @private {boolean}
+       */
+      expandable_: {
+        type: Boolean,
+        computed: 'computeExpandable_(transformedData_, interactive)'
+      },
+
+      /**
+       * The data to display.
+       * @private {!Array<!Object>}
+       */
+      displayedData_: {
+        type: Array,
+        computed:
+            'computeDisplayedData_(transformedData_, expandable_, expanded)'
+      },
+
+      /**
+       * Whether the metric is expanded.
+       * @type {boolean}
+       */
+      expanded: {type: Boolean, value: false, reflectToAttribute: true},
+
+      /**
+       * Whether this component is interactive or not.
+       * @type {boolean}
+       */
+      interactive: {type: Boolean, value: true},
+    };
+  }
 
   /**
    * Parses the srialized data and transforms the result into expected objects.
@@ -66,7 +97,7 @@ Polymer({
    * @return {!Array<!Object>}
    * @private
    */
-  computeTransformedData_: function(data, expanded) {
+  computeTransformedData_(data, expanded) {
     if (data) {
       let parsedData = [];
       try {
@@ -89,7 +120,7 @@ Polymer({
       });
     }
     return [];
-  },
+  }
 
   /**
    * Determines whether the component is expandable.
@@ -98,9 +129,9 @@ Polymer({
    * @return {boolean}
    * @private
    */
-  computeExpandable_: function(data, interactive) {
+  computeExpandable_(data, interactive) {
     return interactive && data.length > 3;
-  },
+  }
 
   /**
    * Determines the data to display.
@@ -110,11 +141,11 @@ Polymer({
    * @return {!Array<!Object>}
    * @private
    */
-  computeDisplayedData_: function(data, expandable, expanded) {
+  computeDisplayedData_(data, expandable, expanded) {
     // If expanded or have no more than three records, show all. If collapsed
     // and have more than three records, show only the first three.
     return (expanded || data.length <= 3) ? data : [data[0], data[1], data[2]];
-  },
+  }
 
   /**
    * Helper function to help extract the metric value out of the given object
@@ -123,23 +154,28 @@ Polymer({
    * @param {string} key
    * @param {boolean} expanded
    * @return {string}
+   * @private
    */
-  getValue_: function(object, key, expanded) {
-    return this.toFixed_(object[key] || 0, expanded);
-  },
+  getValue_(object, key, expanded) {
+    return this.toFixed_(
+        tfma.CellRenderer.extractFloatValue(object, key), expanded);
+  }
 
   /**
    * @param {!Object} matrix
    * @param {boolean} expanded
    * @return {string} The specificity from the matrix.
+   * @private
    */
-  computeSpecificity_: function(matrix, expanded) {
-    const trueNegatives = matrix['trueNegatives'] || 0;
-    const falsePositives = matrix['falsePositives'] || 0;
+  computeSpecificity_(matrix, expanded) {
+    const trueNegatives =
+        tfma.CellRenderer.extractFloatValue(matrix, 'trueNegatives');
+    const falsePositives =
+        tfma.CellRenderer.extractFloatValue(matrix, 'falsePositives');
     const denominator = trueNegatives + falsePositives;
     return this.toFixed_(
         denominator ? trueNegatives / denominator : 0, expanded);
-  },
+  }
 
   /**
    * Round the given value to a fixed number of digits depending on whether the
@@ -149,26 +185,33 @@ Polymer({
    * @return {string}
    * @private
    */
-  toFixed_: function(value, expanded) {
+  toFixed_(value, expanded) {
     // When in epxanded mode, show all 16 digits available in double precision.
     return value.toFixed(expanded ? 16 : tfma.FLOATING_POINT_PRECISION);
-  },
+  }
 
   /**
    * Toggles the expanded flag of the component and fires expand-metric event.
    * @private
    */
-  toggleExpanded_: function() {
+  toggleExpanded_() {
     if (!this.expandable_) {
       return;
     }
     if (this.expanded) {
       this.expanded = false;
     } else {
-      const event = this.fire(
-          'expand-metric', {'data': this.data, 'metric': this.is},
-          {'cancelable': true});
+      const event = new CustomEvent('expand-metric', {
+        'detail': {'data': this.data, 'metric': TAG_NAME_},
+        'cancelable': true,
+        'bubbles': true,
+        'composed': true,
+      });
+      this.dispatchEvent(event);
       this.expanded = !event.defaultPrevented;
     }
-  },
-});
+  }
+}
+
+
+customElements.define(TAG_NAME_, ConfusionMatrixAtThresholds);

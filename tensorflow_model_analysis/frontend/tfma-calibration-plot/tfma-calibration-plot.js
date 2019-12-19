@@ -13,117 +13,161 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-Polymer({
-  is: 'tfma-calibration-plot',
+import {PolymerElement} from '@polymer/polymer/polymer-element.js';
+import {template} from './tfma-calibration-plot-template.html.js';
 
-  properties: {
-    /**
-     * An array of buckets in json.
-     * @type {!Array<!Object>}
-     */
-    buckets: {type: Array},
+import '../tfma-google-chart-wrapper/tfma-google-chart-wrapper.js';
 
-    /**
-     * The size of each bucket.
-     * @type {number}
-     */
-    bucketSize: {type: Number},
+/**
+ * tfma-calibration-plot renders the calibration plot.
+ *
+ * @polymer
+ */
+export class CalibrationPlot extends PolymerElement {
+  constructor() {
+    super();
+  }
 
-    /**
-     * How to determine the error in each prediction / label pair. For available
-     * values, see enum tfma.PlotFit. Defaults to perfectly calibrated (y = x)
-     * which is suitable for most regression problems. For ranking problems,
-     * since the interesting part is that label / prediction pair increase
-     * monotonically, sometimes a least square fit would be better at
-     * highlighting the outliers.
-     * @type {string}
-     */
-    fit: {type: String, value: tfma.PlotFit.PERFECT},
+  static get is() {
+    return 'tfma-calibration-plot';
+  }
 
-    /**
-     * What does the color of each dot highlight. For available values, see enum
-     * tfma.PlotHighlight. Defaults to use error.
-     * @type {string}
-     */
-    color: {type: String, value: tfma.PlotHighlight.ERROR},
+  /** @return {!HTMLTemplateElement} */
+  static get template() {
+    return template;
+  }
 
-    /**
-     * What does the size of each dot highlight. For available values, see enum
-     * tfma.PlotHighlight. Default to use weight.
-     * @type {string}
-     */
-    size: {type: String, value: tfma.PlotHighlight.WEIGHTS},
+  /** @return {!PolymerElementProperties} */
+  static get properties() {
+    return {
+      /**
+       * An array of buckets in json.
+       * @type {!Array<!Object>}
+       */
+      buckets: {type: Array},
 
-    /**
-     * What is the scale for the x and y axes. For available values, see enum
-     * tfma.PlotScale.
-     * @type {string}
-     */
-    scale: {type: String, value: tfma.PlotScale.LINEAR},
+      /**
+       * The number of buckets in which to regroup the data.
+       * @type {number}
+       */
+      numberOfBuckets: {type: Number, value: 100},
 
-    /**
-     * Overrides that should be applied to the chart.
-     * @type {{
-     *   colorHighValue: (number|undefined),
-     *   colorLowValue: (number|undefined),
-     *   colorMaxValue: (number|undefined),
-     *   colorMinValue: (number|undefined),
-     *   sizeMaxRadius: (number|undefined),
-     *   sizeMinRadius: (number|undefined),
-     *   sizeMaxValue: (number|undefined),
-     *   sizeMinValue: (number|undefined),
-     *   title: (string|undefined),
-     * }}
-     */
-    overrides: {type: Object, value: {}},
+      /**
+       * How to determine the error in each prediction / label pair. For
+       * available values, see enum tfma.PlotFit. Defaults to perfectly
+       * calibrated (y = x) which is suitable for most regression problems. For
+       * ranking problems, since the interesting part is that label / prediction
+       * pair increase monotonically, sometimes a least square fit would be
+       * better at highlighting the outliers.
+       * @type {string}
+       */
+      fit: {type: String, value: tfma.PlotFit.PERFECT},
 
-    /**
-     * Options for the bubble chart.
-     * @type {!Object}
-     */
-    options: {
-      type: Object,
-      computed: 'computeOptions_(color, size, scale, overrides)'
-    },
+      /**
+       * What does the color of each dot highlight. For available values, see
+       * enum tfma.PlotHighlight. Defaults to use error.
+       * @type {string}
+       */
+      color: {type: String, value: tfma.PlotHighlight.ERROR},
 
-    /**
-     * The header to use for the plot.
-     * @private {!Array<string>}
-     */
-    header_: {type: Array, computed: 'getHeader_(scale, color, size)'},
+      /**
+       * What does the size of each dot highlight. For available values, see
+       * enum tfma.PlotHighlight. Default to use weight.
+       * @type {string}
+       */
+      size: {type: String, value: tfma.PlotHighlight.WEIGHTS},
 
-    /**
-     * The data to be plotted in the bubble chart.
-     * @private {!Array<!Array<string|number>>}
-     */
-    plotData_: {
-      type: Array,
-      computed: 'computePlotData_(buckets, header_, fit, scale, color, size, ' +
-          'bucketSize)'
-    },
-  },
+      /**
+       * What is the scale for the x and y axes. For available values, see enum
+       * tfma.PlotScale.
+       * @type {string}
+       */
+      scale: {type: String, value: tfma.PlotScale.LINEAR},
+
+      /**
+       * Overrides that should be applied to the chart.
+       * @type {{
+       *   colorHighValue: (number|undefined),
+       *   colorLowValue: (number|undefined),
+       *   colorMaxValue: (number|undefined),
+       *   colorMinValue: (number|undefined),
+       *   sizeMaxRadius: (number|undefined),
+       *   sizeMinRadius: (number|undefined),
+       *   sizeMaxValue: (number|undefined),
+       *   sizeMinValue: (number|undefined),
+       *   title: (string|undefined),
+       * }}
+       */
+      overrides: {type: Object, value: {}},
+
+      /**
+       * Options for the bubble chart.
+       * @private {!Object}
+       */
+      options_: {
+        type: Object,
+        computed: 'computeOptions_(color, size, scale, overrides, buckets)'
+      },
+
+      /**
+       * The header to use for the plot.
+       * @private {!Array<string>}
+       */
+      header_: {type: Array, computed: 'getHeader_(scale, color, size)'},
+
+      /**
+       * The data to be plotted in the bubble chart.
+       * @private {!Array<!Array<string|number>>}
+       */
+      plotData_: {
+        type: Array,
+        computed:
+            'computePlotData_(buckets, header_, fit, scale, color, size, ' +
+            'numberOfBuckets)'
+      },
+    };
+  }
 
   /**
    * @param {string} color
    * @param {string} size
    * @param {string} scale
    * @param {!Object} overrides
+   * @param {!Array|undefined} buckets
    * @return {!Object} The options object used for configuring the google-chart
    *     object.
    * @private
    */
-  computeOptions_: function(color, size, scale, overrides) {
+  computeOptions_(color, size, scale, overrides, buckets) {
     var options = {
       'title': 'Calibration Plot',
-      'hAxis': {'title': 'Average Prediction', 'minValue': 0, 'maxValue': 1},
-      'vAxis': {'title': 'Average Label', 'minValue': 0, 'maxValue': 1},
+      'hAxis': {
+        'title': 'Average Prediction',
+      },
+      'vAxis': {
+        'title': 'Average Label',
+      },
       'bubble': {'textStyle': {'fontSize': 11}},
       'colorAxis':
           {'colors': ['#F0F0F0', '#0A47A4'], 'minValue': 0, 'maxValue': 10},
       'sizeAxis': {'minValue': 0, 'maxValue': 0.5, 'minSize': 2, 'maxSize': 12},
-      'explorer':
-          {'actions': ['dragToPan', 'scrollToZoom', 'rightClickToReset']},
+      'explorer': {'actions': ['dragToZoom', 'rightClickToReset']},
     };
+
+    const min =
+        buckets && buckets[0] && buckets[0]['upperThresholdExclusive'];
+    const max = buckets && buckets[buckets.length - 1] &&
+            buckets[buckets.length - 1]['lowerThresholdInclusive'];
+    // Force the view window to [0, 1] if applicable.
+    if (!min && max == 1) {
+      const setAxis = (axis) => {
+        axis['minValue'] = 0;
+        axis['maxValue']= 1;
+        axis['viewWindow'] = {'min': 0, 'max': 1};
+      };
+      setAxis(options['hAxis']);
+      setAxis(options['vAxis']);
+    }
 
     if (scale == tfma.PlotScale.LOG) {
       options['hAxis']['logScale'] = true;
@@ -175,7 +219,7 @@ Polymer({
     }
 
     return options;
-  },
+  }
 
   /**
    * @param {string} scale
@@ -185,7 +229,7 @@ Polymer({
    *     of the calibration plot.
    * @private
    */
-  getHeader_: function(scale, color, size) {
+  getHeader_(scale, color, size) {
     var header = ['bucket', 'prediction', 'label', 'color: ', 'size: '];
 
     if (scale == tfma.PlotScale.LOG) {
@@ -197,7 +241,7 @@ Polymer({
     header[4] += size == tfma.PlotHighlight.WEIGHTS ? 'log(weight)' : 'error';
 
     return header;
-  },
+  }
 
   /**
    * @param {!Array<!Object>} buckets
@@ -206,16 +250,21 @@ Polymer({
    * @param {string} scale
    * @param {string} color
    * @param {string} size
-   * @param {number} bucketSize
-   * @return {!Array<!Array<string|number>>} A 2d array representing the data
-   *     that will be visualized in the claibration plot.
+   * @param {number} numberOfBuckets
+   * @return {(!Array<!Array<string|number>>|undefined)} A 2d array representing
+   *     the data that will be visualized in the claibration plot.
    * @private
    */
-  computePlotData_: function(
-      buckets, header, fit, scale, color, size, bucketSize) {
+  computePlotData_(buckets, header, fit, scale, color, size, numberOfBuckets) {
+    if (!buckets || !header) {
+      return undefined;
+    }
+
     const plotData = [header];
     tfma.BucketsWrapper.getCalibrationPlotData(
-        buckets, fit, scale, color, size, bucketSize, plotData);
+        buckets, fit, scale, color, size, numberOfBuckets, plotData);
     return plotData;
   }
-});
+}
+
+customElements.define('tfma-calibration-plot', CalibrationPlot);

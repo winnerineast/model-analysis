@@ -57,26 +57,40 @@ recommend that you use BoundedValue with loose bounds to avoid flaky tests.
 
 from __future__ import absolute_import
 from __future__ import division
-
+# Standard __future__ imports
 from __future__ import print_function
 
-
+# Standard Imports
 import apache_beam as beam
 from apache_beam.testing import util as beam_util
 
-from tensorflow_model_analysis.api.impl import evaluate
+from tensorflow_model_analysis import config
+from tensorflow_model_analysis import types
+from tensorflow_model_analysis.api import model_eval_lib
 from tensorflow_model_analysis.eval_saved_model import load
 from tensorflow_model_analysis.eval_saved_model import testutil
-from tensorflow_model_analysis.slicer import slicer
-from tensorflow_model_analysis.types_compat import Any, List, Dict, Union
+from tensorflow_model_analysis.evaluators import metrics_and_plots_evaluator
+from tensorflow_model_analysis.extractors import extractor
+from tensorflow_model_analysis.slicer import slicer_lib as slicer
+from typing import Any, List, Dict, Text, Optional
+
+
+@beam.ptransform_fn
+@beam.typehints.with_input_types(types.Extracts)
+@beam.typehints.with_output_types(types.Extracts)
+def Extract(  # pylint: disable=invalid-name
+    extracts: beam.pvalue.PCollection, extractors: List[extractor.Extractor]):
+  for x in extractors:
+    extracts = (extracts | x.stage_name >> x.ptransform)
+  return extracts
 
 
 class BoundedValue(object):
   """Represents a bounded value for a metric for the TFMA unit test."""
 
   def __init__(self,
-               lower_bound = float('-inf'),
-               upper_bound = float('inf')):
+               lower_bound: float = float('-inf'),
+               upper_bound: float = float('inf')):
     self.lower_bound = lower_bound
     self.upper_bound = upper_bound
 
@@ -104,9 +118,21 @@ class TestCase(testutil.TensorflowModelAnalysisTest):
     """
     return self._makeExample(**kwargs).SerializeToString()
 
-  def assertDictElementsWithinBounds(
-      self, got_values_dict,
-      expected_values_dict):
+  def assertDictElementsWithinBounds(self, got_values_dict: Dict[Text, Any],
+                                     expected_values_dict: Dict[Text, Any]):
+    """Checks the elements for two dictionaries.
+
+    It asserts all values in `expected_values_dict` are close to values with the
+    same key in `got_values_dict`.
+
+    Args:
+      got_values_dict: The actual dictionary.
+      expected_values_dict: The expected dictionary. The values in can be either
+        `BoundedValue` or any type accepted by
+        `tf.test.TestCase.assertAllClose()`. When the type is `BoundedValue`, it
+        expects the corresponding value from `got_values_dict` falls into the
+        boundaries provided in the `BoundedValue`.
+    """
     for key, value in expected_values_dict.items():
       self.assertIn(key, got_values_dict)
       got_value = got_values_dict[key]
@@ -116,11 +142,11 @@ class TestCase(testutil.TensorflowModelAnalysisTest):
                     '(both ends inclusive), but value was %f instead' %
                     (key, value.lower_bound, value.upper_bound, got_value))
       else:
-        self.assertAlmostEqual(got_value, value, msg='key = %s' % key)
+        self.assertAllClose(got_value, value, msg='key = %s' % key)
 
-  def assertMetricsComputedWithoutBeamAre(self, eval_saved_model_path,
-                                          serialized_examples,
-                                          expected_metrics):
+  def assertMetricsComputedWithoutBeamAre(self, eval_saved_model_path: Text,
+                                          serialized_examples: List[bytes],
+                                          expected_metrics: Dict[Text, Any]):
     """Checks metrics in-memory using the low-level APIs without Beam.
 
     Example usage:
@@ -142,8 +168,8 @@ class TestCase(testutil.TensorflowModelAnalysisTest):
         expected_values_dict=expected_metrics)
 
   def assertMetricsComputedWithoutBeamNoBatchingAre(
-      self, eval_saved_model_path, serialized_examples,
-      expected_metrics):
+      self, eval_saved_model_path: Text, serialized_examples: List[bytes],
+      expected_metrics: Dict[Text, Any]):
     """Checks metrics in-memory using the low-level APIs without Beam.
 
     This is the non-batched version of assertMetricsComputedWithoutBeamAre.
@@ -163,8 +189,8 @@ class TestCase(testutil.TensorflowModelAnalysisTest):
         expected_values_dict=expected_metrics)
 
   def _computeMetricsWithoutBeam(
-      self, eval_saved_model_path,
-      serialized_examples):
+      self, eval_saved_model_path: Text,
+      serialized_examples: List[bytes]) -> Dict[Text, Any]:
     """Computes metrics in-memory using the low-level APIs without Beam.
 
     Args:
@@ -176,15 +202,12 @@ class TestCase(testutil.TensorflowModelAnalysisTest):
       Metrics computed by TFMA using your model on the given examples.
     """
     eval_saved_model = load.EvalSavedModel(eval_saved_model_path)
-    features_predictions_labels_list = eval_saved_model.predict_list(
-        serialized_examples)
-    eval_saved_model.metrics_reset_update_get_list(
-        features_predictions_labels_list)
+    eval_saved_model.metrics_reset_update_get_list(serialized_examples)
     return eval_saved_model.get_metric_values()
 
   def _computeMetricsWithoutBeamNoBatching(
-      self, eval_saved_model_path,
-      serialized_examples):
+      self, eval_saved_model_path: Text,
+      serialized_examples: List[bytes]) -> Dict[Text, Any]:
     """Computes metrics in-memory using the low-level APIs without Beam.
 
     This is the non-batched version of computeMetricsWithoutBeam. This can be
@@ -203,13 +226,16 @@ class TestCase(testutil.TensorflowModelAnalysisTest):
     eval_saved_model = load.EvalSavedModel(eval_saved_model_path)
 
     for example in serialized_examples:
-      features_predictions_labels = eval_saved_model.predict(example)
-      eval_saved_model.perform_metrics_update(features_predictions_labels)
+      eval_saved_model.metrics_reset_update_get_list([example])
     return eval_saved_model.get_metric_values()
 
-  def assertMetricsComputedWithBeamAre(self, eval_saved_model_path,
-                                       serialized_examples,
-                                       expected_metrics):
+  def assertMetricsComputedWithBeamAre(
+      self,
+      eval_saved_model_path: Text,
+      serialized_examples: List[bytes],
+      expected_metrics: Dict[Text, Any],
+      add_metrics_callbacks: Optional[List[
+          types.AddMetricsCallbackType]] = None):
     """Checks metrics computed using Beam.
 
     Metrics will be computed over all examples, without any slicing. If you
@@ -230,6 +256,7 @@ class TestCase(testutil.TensorflowModelAnalysisTest):
         EvalSavedModel.
       serialized_examples: List of serialized example bytes.
       expected_metrics: Dictionary of expected metric values.
+      add_metrics_callbacks: Optional. Callbacks for adding additional metrics.
     """
 
     def check_metrics(got):
@@ -245,21 +272,35 @@ class TestCase(testutil.TensorflowModelAnalysisTest):
       except AssertionError as err:
         raise beam_util.BeamAssertException(err)
 
+    eval_config = config.EvalConfig(
+        input_data_specs=[config.InputDataSpec()],
+        model_specs=[config.ModelSpec(location=eval_saved_model_path)],
+        output_data_specs=[config.OutputDataSpec()])
+    eval_shared_model = model_eval_lib.default_eval_shared_model(
+        eval_saved_model_path=eval_saved_model_path,
+        add_metrics_callbacks=add_metrics_callbacks)
+    extractors = model_eval_lib.default_extractors(
+        eval_config=eval_config, eval_shared_model=eval_shared_model)
+
     with beam.Pipeline() as pipeline:
-      metrics, _ = (
+      # pylint: disable=no-value-for-parameter
+      (metrics, _), _ = (
           pipeline
           | 'CreateExamples' >> beam.Create(serialized_examples)
-          | 'Evaluate' >>
-          evaluate.Evaluate(eval_saved_model_path=eval_saved_model_path))
+          | 'InputsToExtracts' >> model_eval_lib.InputsToExtracts()
+          | 'Extract' >> Extract(extractors=extractors)
+          | 'ComputeMetricsAndPlots' >> metrics_and_plots_evaluator
+          .ComputeMetricsAndPlots(eval_shared_model=eval_shared_model))
+      # pylint: enable=no-value-for-parameter
 
       beam_util.assert_that(metrics, check_metrics)
 
   def assertGeneralMetricsComputedWithBeamAre(
-      self, eval_saved_model_path,
-      examples_pcollection,
-      slice_spec,
-      add_metrics_callbacks,
-      expected_slice_metrics):
+      self, eval_saved_model_path: Text,
+      examples_pcollection: beam.pvalue.PCollection,
+      slice_spec: List[slicer.SingleSliceSpec],
+      add_metrics_callbacks: List[types.AddMetricsCallbackType],
+      expected_slice_metrics: Dict[Any, Dict[Text, Any]]):
     """Checks metrics computed using Beam.
 
     A more general version of assertMetricsComputedWithBeamAre. Note that the
@@ -292,10 +333,10 @@ class TestCase(testutil.TensorflowModelAnalysisTest):
         self.assertGeneralMetricsComputedWithBeamAre(
           eval_saved_model_path=path,
           examples_pcollection=examples,
-          slice_spec=[tfma.SingleSliceSpec(),
-                      tfma.SingleSliceSpec(columns=['age'])],
+          slice_spec=[tfma.slicer.SingleSliceSpec(),
+                      tfma.slicer.SingleSliceSpec(columns=['age'])],
           add_metrics_callbacks=[
-            add_metrics, tfma.post_export_metrics.post_export_metrics.auc()],
+            add_metrics, tfma.post_export_metrics.auc()],
           expected_slice_metrics=expected_slice_metrics)
 
     Args:
@@ -315,7 +356,8 @@ class TestCase(testutil.TensorflowModelAnalysisTest):
         slices = {}
         for slice_key, value in got:
           slices[slice_key] = value
-        self.assertItemsEqual(slices.keys(), expected_slice_metrics.keys())
+        self.assertItemsEqual(
+            list(slices.keys()), list(expected_slice_metrics.keys()))
         for slice_key, expected_metrics in expected_slice_metrics.items():
           self.assertDictElementsWithinBounds(
               got_values_dict=slices[slice_key],
@@ -323,11 +365,27 @@ class TestCase(testutil.TensorflowModelAnalysisTest):
       except AssertionError as err:
         raise beam_util.BeamAssertException(err)
 
-    metrics, _ = (
+    slicing_specs = None
+    if slice_spec:
+      slicing_specs = [s.to_proto() for s in slice_spec]
+    eval_config = config.EvalConfig(
+        input_data_specs=[config.InputDataSpec()],
+        model_specs=[config.ModelSpec(location=eval_saved_model_path)],
+        output_data_specs=[config.OutputDataSpec()],
+        slicing_specs=slicing_specs)
+    eval_shared_model = self.createTestEvalSharedModel(
+        eval_saved_model_path=eval_saved_model_path,
+        add_metrics_callbacks=add_metrics_callbacks)
+    extractors = model_eval_lib.default_extractors(
+        eval_config=eval_config, eval_shared_model=eval_shared_model)
+
+    # pylint: disable=no-value-for-parameter
+    (metrics, _), _ = (
         examples_pcollection
-        | 'Evaluate' >> evaluate.Evaluate(
-            eval_saved_model_path=eval_saved_model_path,
-            slice_spec=slice_spec,
-            add_metrics_callbacks=add_metrics_callbacks))
+        | 'InputsToExtracts' >> model_eval_lib.InputsToExtracts()
+        | 'Extract' >> Extract(extractors=extractors)
+        | 'ComputeMetricsAndPlots' >> metrics_and_plots_evaluator
+        .ComputeMetricsAndPlots(eval_shared_model=eval_shared_model))
+    # pylint: enable=no-value-for-parameter
 
     beam_util.assert_that(metrics, check_metrics)

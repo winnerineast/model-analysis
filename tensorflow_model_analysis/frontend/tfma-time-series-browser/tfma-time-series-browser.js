@@ -13,57 +13,86 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-Polymer({
-  is: 'tfma-time-series-browser',
+import {PolymerElement} from '@polymer/polymer/polymer-element.js';
+import {template} from './tfma-time-series-browser-template.html.js';
 
-  properties: {
-    /**
-     * Series data being visualized, which will be passed to the linechart-grid
-     * and the metrics-table.
-     * @type {!tfma.SeriesData}
-     */
-    seriesData: {type: Object},
+import '../tfma-line-chart-grid/tfma-line-chart-grid.js';
+import '../tfma-metrics-table/tfma-metrics-table.js';
 
-    /**
-     * A comma separated string of metrics to skip.
-     * @type {string}
-     */
-    blacklist: {
-      type: String,
-      value: '',
-    },
+/**
+ * tfma-line-chart-grid renders the time series plot for a number of metrics in
+ * a grid layout.
+ *
+ * @polymer
+ */
+export class TimeSeriesBrowser extends PolymerElement {
+  constructor() {
+    super();
+  }
 
-    /**
-     * Metrics available in the seriesData.
-     * @private {!Array<string>}
-     */
-    metrics_: {type: Array, computed: 'computeMetrics_(seriesData)'},
+  static get is() {
+    return 'tfma-time-series-browser';
+  }
 
-    /**
-     * An object that specifies desired format overrides.
-     * @type {!Object}
-     */
-    formats: {
-      type: Object,
-      value: () => {
-        return {};
-      }
-    },
+  /** @return {!HTMLTemplateElement} */
+  static get template() {
+    return template;
+  }
 
-    /**
-     * An object containing the formats that will be used to render the metrics
-     * table.
-     * @type {!Object}
-     */
-    metricFormats_: {type: Object, computed: 'computeMetricFormats_(formats)'},
-  },
+  /** @return {!PolymerElementProperties} */
+  static get properties() {
+    return {
+      /**
+       * Series data being visualized, which will be passed to the
+       * linechart-grid and the metrics-table.
+       * @type {!tfma.SeriesData}
+       */
+      seriesData: {type: Object},
+
+      /**
+       * A comma separated string of metrics to skip.
+       * @type {string}
+       */
+      blacklist: {
+        type: String,
+        value: '',
+      },
+
+      /**
+       * Metrics available in the seriesData.
+       * @private {!Array<string>}
+       */
+      metrics_: {type: Array, computed: 'computeMetrics_(seriesData)'},
+
+      /**
+       * An object that specifies desired format overrides.
+       * @type {!Object}
+       */
+      formats: {
+        type: Object,
+        value: () => {
+          return {};
+        }
+      },
+
+      /**
+       * An object containing the formats that will be used to render the
+       * metrics table.
+       * @type {!Object}
+       */
+      metricFormats_:
+          {type: Object, computed: 'computeMetricFormats_(formats)'},
+    };
+  }
 
 
   /**
    * Initializes event listeners.
    * @override
    */
-  ready: function() {
+  ready() {
+    super.ready();
+
     const grid = this.$.grid;
     const table = this.$.table;
 
@@ -82,17 +111,17 @@ Polymer({
     table.addEventListener(tfma.Event.CLEAR_SELECTION, () => {
       grid.highlight(null);
     });
-  },
+  }
 
   /**
    * Computes the metrics available in all models.
-   * @param {!tfma.SeriesData} seriesData
+   * @param {!tfma.SeriesData|undefined} seriesData
    * @return {!Array<string>}
    * @private
    */
-  computeMetrics_: function(seriesData) {
-    return seriesData.getMetrics();
-  },
+  computeMetrics_(seriesData) {
+    return seriesData ? seriesData.getMetrics() : [];
+  }
 
   /**
    * Appends necessary format override to the formats specified by the client.
@@ -100,11 +129,13 @@ Polymer({
    * @return {!Object}
    * @private
    */
-  computeMetricFormats_: function(formats) {
+  computeMetricFormats_(formats) {
     const desiredFormats = Object.assign({}, formats);
     desiredFormats[tfma.Column.TOTAL_EXAMPLE_COUNT] = {
       type: tfma.MetricValueFormat.INT64
     };
     return desiredFormats;
-  },
-});
+  }
+}
+
+customElements.define('tfma-time-series-browser', TimeSeriesBrowser);

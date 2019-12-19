@@ -1,0 +1,11 @@
+toc:
+- title: "Install"
+  path: /tfx/model_analysis/install
+- title: "Get started"
+  path: /tfx/model_analysis/get_started
+- title: "Architecture"
+  path: /tfx/model_analysis/architecture
+- title: "Improving Model Quality"
+  path: /tfx/guide/tfma
+- title: "Using Fairness Indicators"
+  path: /tfx/guide/fairness_indicators

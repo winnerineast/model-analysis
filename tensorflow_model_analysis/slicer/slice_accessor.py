@@ -18,27 +18,28 @@ For use within this directory only.
 
 from __future__ import absolute_import
 from __future__ import division
-
+# Standard __future__ imports
 from __future__ import print_function
 
-
+# Standard Imports
 import numpy as np
 import tensorflow as tf
 from tensorflow_model_analysis import types
 
-from tensorflow_model_analysis.types_compat import List, Union
+from typing import List, Text, Union
 
 
 class SliceAccessor(object):
   """Wrapper around features dict for accessing keys and values for slicing."""
 
-  def __init__(self, features_dict):
+  def __init__(self, features_dict: Union[types.DictOfTensorValue,
+                                          types.DictOfFetchedTensorValues]):
     self._features_dict = features_dict
 
-  def has_key(self, key):
+  def has_key(self, key: Text):
     return key in self._features_dict
 
-  def get(self, key):
+  def get(self, key: Text) -> List[Union[int, bytes, float]]:
     """Get the values of the feature with the given key.
 
     Args:
@@ -52,17 +53,21 @@ class SliceAccessor(object):
       ValueError: A dense feature was not a 1D array.
       ValueError: The feature had an unknown type.
     """
-    feature = self._features_dict.get(key)
-    if feature is None:
+    value = self._features_dict.get(key)
+    if value is None:
       raise KeyError('key %s not found' % key)
 
-    value = feature['node']
-    if isinstance(value, tf.SparseTensorValue):
-      return value.values.tolist()
+    if isinstance(value, dict) and 'node' in value:
+      # Backwards compatibility for features that were stored as FPL types
+      # instead of native dicts.
+      value = value['node']
+    if isinstance(value, tf.compat.v1.SparseTensorValue):
+      return value.values.tolist()  # pytype: disable=attribute-error
     if not isinstance(value, np.ndarray):
       raise ValueError(
           'feature had unsupported type: key: %s, value: %s, type: %s' %
           (key, value, type(value)))
+    # TODO(b/133113963): Consider changing to flatten so works with 2-D data.
     squeezed_value = np.squeeze(value)
     if squeezed_value.ndim > 1:
       raise ValueError(
@@ -70,8 +75,8 @@ class SliceAccessor(object):
           'not. value was %s' % (key, value))
     if squeezed_value.ndim == 1:
       # For the multivalent columns, the squeezed values are in 1D arrays.
-      # Convert the array to a list.
-      return squeezed_value.tolist()
+      # Convert the array to a list of unique values.
+      return np.unique(squeezed_value).tolist()
     else:  # squeezed_value.ndim == 0
       # For the univalent columns, we get a scalar after squeezing, which we
       # wrap in an list.

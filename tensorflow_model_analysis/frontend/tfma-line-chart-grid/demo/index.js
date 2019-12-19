@@ -65,7 +65,7 @@
   grid.metrics = ['a', 'b', 'c'];
 
   let highlighted = 0;
-  const highlight = document.getElementById('highlight');
+  const highlight = document.getElementById('highlight-data-point');
   highlight.addEventListener('click', () => {
     const model = models[highlighted];
     const data = fakeDataFromModel(model);
@@ -80,8 +80,8 @@
 
   const text = document.getElementById('text');
   grid.addEventListener('select', (e) => {
-    text.innerText =
-        'Selected Model: ' + e.detail.Model + ' and Data: ' + e.detail.Data;
+    text.innerText = 'Selected Model: ' + e.detail['Model'] +
+        ' and Data: ' + e.detail['Data'];
   });
   grid.addEventListener('clear-selection', () => {
     text.innerText = '';

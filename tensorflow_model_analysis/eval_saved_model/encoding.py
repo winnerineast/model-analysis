@@ -15,12 +15,14 @@
 
 from __future__ import absolute_import
 from __future__ import division
-
+# Standard __future__ imports
 from __future__ import print_function
 
-
+# Standard Imports
+import six
 import tensorflow as tf
 from tensorflow_model_analysis import types
+from typing import Text
 
 from google.protobuf import any_pb2
 from tensorflow.core.protobuf import meta_graph_pb2
@@ -32,6 +34,7 @@ PREDICTIONS_COLLECTION = 'evaluation_only/predictions'
 INPUT_EXAMPLE_COLLECTION = 'evaluation_only/label_graph/input_example'
 LABELS_COLLECTION = 'evaluation_only/label_graph/labels'
 FEATURES_COLLECTION = 'evaluation_only/label_graph/features'
+EXAMPLE_REF_COLLECTION = 'evaluation_only/label_graph/example_ref'
 
 # Suffixes for the collection names
 KEY_SUFFIX = 'key'
@@ -39,23 +42,16 @@ NODE_SUFFIX = 'node'
 VALUE_OP_SUFFIX = 'value_op'
 UPDATE_OP_SUFFIX = 'update_op'
 
-# If predictions/labels was not a dictionary, we internally wrap them
-# in a dictionary with the respective default keys.
-#
-# Note that the key names start with two underscores to avoid collisions
-# in the rare case that there are actually keys named 'predictions' or 'labels'
-# in the respective dictionaries.
-DEFAULT_PREDICTIONS_DICT_KEY = '__predictions'
-DEFAULT_LABELS_DICT_KEY = '__labels'
-
 # Encoding prefixes for keys
-_TUPLE_KEY_PREFIX = '$Tuple$'
-_BYTES_KEY_PREFIX = '$Bytes$'
+_TUPLE_KEY_PREFIX = b'$Tuple$'
+_BYTES_KEY_PREFIX = b'$Bytes$'
 
 
+def with_suffix(name: Text, suffix: Text) -> Text:
+  return '%s/%s' % (name, suffix)  # pytype: disable=bad-return-type
 
 
-def encode_key(key):
+def encode_key(key: types.FPLKeyType) -> bytes:
   """Encode a dictionary key as a string.
 
   For encoding dictionary keys in the prediction, label and feature
@@ -81,21 +77,22 @@ def encode_key(key):
 
   if isinstance(key, tuple):
     if not all(
-        isinstance(elem, str) or isinstance(elem, unicode) for elem in key):
+        isinstance(elem, six.binary_type) or isinstance(elem, six.text_type)
+        for elem in key):
       raise TypeError('if key is tuple, all elements should be strings. '
                       'key was: %s' % key)
-    utf8_keys = [elem.encode('utf8') for elem in key]
-    lengths = map(len, utf8_keys)
-    return '%s%d$%s$%s' % (_TUPLE_KEY_PREFIX, len(lengths),
-                           '$'.join(map(str, lengths)), '$'.join(utf8_keys))
-  elif isinstance(key, str) or isinstance(key, unicode):
-    return '$Bytes$' + key.encode('utf8')
+    utf8_keys = [tf.compat.as_bytes(elem) for elem in key]
+    length_strs = [tf.compat.as_bytes('%d' % len(key)) for key in utf8_keys]
+    return (_TUPLE_KEY_PREFIX + tf.compat.as_bytes('%d' % len(length_strs)) +
+            b'$' + b'$'.join(length_strs) + b'$' + b'$'.join(utf8_keys))
+  elif isinstance(key, six.binary_type) or isinstance(key, six.text_type):
+    return b'$Bytes$' + tf.compat.as_bytes(key)
   else:
     raise TypeError('key has unrecognised type: type: %s, value %s' %
                     (type(key), key))
 
 
-def decode_key(encoded_key):
+def decode_key(encoded_key: bytes) -> types.FPLKeyType:
   """Decode an encoded dictionary key encoded with encode_key.
 
   Args:
@@ -108,11 +105,11 @@ def decode_key(encoded_key):
     ValueError: We couldn't decode the encoded key.
   """
   if encoded_key.startswith(_TUPLE_KEY_PREFIX):
-    parts = encoded_key[len(_TUPLE_KEY_PREFIX):].split('$', 1)
+    parts = encoded_key[len(_TUPLE_KEY_PREFIX):].split(b'$', 1)
     if len(parts) != 2:
       raise ValueError('invalid encoding: %s' % encoded_key)
     elem_count = int(parts[0])
-    parts = parts[1].split('$', elem_count)
+    parts = parts[1].split(b'$', elem_count)
     if len(parts) != elem_count + 1:
       raise ValueError('invalid encoding: %s' % encoded_key)
     lengths = map(int, parts[:elem_count])
@@ -128,7 +125,7 @@ def decode_key(encoded_key):
     raise ValueError('invalid encoding: %s' % encoded_key)
 
 
-def encode_tensor_node(node):
+def encode_tensor_node(node: types.TensorType) -> any_pb2.Any:
   """Encode a "reference" to a Tensor/SparseTensor as a TensorInfo in an Any.
 
   We put the Tensor / SparseTensor in a TensorInfo, which we then wrap in an
@@ -141,13 +138,13 @@ def encode_tensor_node(node):
     Any proto wrapping a TensorInfo.
   """
   any_buf = any_pb2.Any()
-  tensor_info = tf.saved_model.utils.build_tensor_info(node)
+  tensor_info = tf.compat.v1.saved_model.utils.build_tensor_info(node)
   any_buf.Pack(tensor_info)
   return any_buf
 
 
-def decode_tensor_node(graph,
-                       encoded_tensor_node):
+def decode_tensor_node(graph: tf.Graph,
+                       encoded_tensor_node: any_pb2.Any) -> types.TensorType:
   """Decode an encoded Tensor node encoded with encode_tensor_node.
 
   Decodes the encoded Tensor "reference", and returns the node in the given
@@ -162,4 +159,5 @@ def decode_tensor_node(graph,
   """
   tensor_info = meta_graph_pb2.TensorInfo()
   encoded_tensor_node.Unpack(tensor_info)
-  return tf.saved_model.utils.get_tensor_from_tensor_info(tensor_info, graph)
+  return tf.compat.v1.saved_model.utils.get_tensor_from_tensor_info(
+      tensor_info, graph)

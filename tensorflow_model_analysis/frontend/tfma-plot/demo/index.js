@@ -76,7 +76,7 @@
   loading.initialType = tfma.PlotTypes.CALIBRATION_PLOT;
   loading.loading = true;
 
-  const error = document.getElementById('error');
+  const error = document.getElementById('error-matrix');
   error.addEventListener('reload-plot-data', () => {
     error.loading = true;
     const prompt = document.getElementById('reload-prompt');
@@ -93,4 +93,85 @@
     tfma.PlotTypes.PREDICTION_DISTRIBUTION
   ];
   error.initialType = tfma.PlotTypes.CALIBRATION_PLOT;
+
+  const flatView = document.getElementById('flat');
+  flatView.availableTypes = [
+    tfma.PlotTypes.ACCURACY_CHARTS,
+    tfma.PlotTypes.GAIN_CHART,
+    tfma.PlotTypes.PREDICTION_DISTRIBUTION,
+    tfma.PlotTypes.ROC_CURVE,
+    tfma.PlotTypes.CALIBRATION_PLOT,
+    tfma.PlotTypes.PRECISION_RECALL_CURVE,
+  ];
+  flatView.initialType = tfma.PlotTypes.PRECISION_RECALL_CURVE;
+  flatView.loading = false;
+  flatView.subtitles = {
+    [tfma.PlotTypes.PRECISION_RECALL_CURVE]: 'AUPRC is ...',
+    [tfma.PlotTypes.ROC_CURVE]: 'AUROC is ...',
+  };
+
+  flatView.data = {
+    'plotData': {
+      'bucketByRefinedPrediction': {'buckets': input},
+      'binaryClassificationByThreshold': {'matrices': precisionRecallCurveInput}
+    }
+  };
+
+  const multiClassMatrices = [];
+  const multiLabelMatrices = [];
+  const matrixStep = 0.25;
+  const classCount = 4;
+  const getCount = () => Math.floor(Math.random() * 1000);
+  let matrixThreshold = 0;
+  while (matrixThreshold <= 1) {
+    const multiLabelEntries = [];
+    const multiClassEntries = [];
+    for (let actual = 0; actual < classCount; actual++) {
+      for (let predicted = 0; predicted < classCount; predicted++) {
+        const isDiagonal = actual == predicted;
+        multiLabelEntries.push({
+          'actualClassId': actual,
+          'predictedClassId': predicted,
+          'truePositives': isDiagonal ? getCount() : 0,
+          'falsePositives': isDiagonal ? 0 : getCount(),
+          'trueNegatives': getCount(),
+          'falseNegatives': getCount(),
+        });
+        multiClassEntries.push({
+          'actualClassId': actual,
+          'predictedClassId': predicted,
+          'numWeightedExamples': getCount(),
+        });
+      }
+
+      multiClassEntries.push({
+        'actualClassId': actual,
+        'predictedClassId': -1,
+        'numWeightedExamples': getCount(),
+      });
+    }
+    multiClassMatrices.push(
+        {'threshold': matrixThreshold, 'entries': multiClassEntries});
+    multiLabelMatrices.push(
+        {'threshold': matrixThreshold, 'entries': multiLabelEntries});
+    matrixThreshold += matrixStep;
+  }
+
+  const confusionMatrix = document.getElementById('matrix');
+  confusionMatrix.availableTypes = [
+    tfma.PlotTypes.MULTI_LABEL_CONFUSION_MATRIX,
+    tfma.PlotTypes.MULTI_CLASS_CONFUSION_MATRIX
+  ];
+  confusionMatrix.initialType = tfma.PlotTypes.MULTI_LABEL_CONFUSION_MATRIX;
+  precisionRecallCurve.loading = false;
+  confusionMatrix.data = {
+    'plotData': {
+      'multiClassConfusionMatrixAtThresholds': {
+        'matrices': multiClassMatrices,
+      },
+      'multiLabelConfusionMatrixAtThresholds': {
+        'matrices': multiLabelMatrices,
+      },
+    }
+  };
 })();

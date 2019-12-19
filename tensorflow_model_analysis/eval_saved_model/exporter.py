@@ -16,15 +16,18 @@
 
 from __future__ import absolute_import
 from __future__ import division
-
+# Standard __future__ imports
 from __future__ import print_function
 
+import contextlib
 import os
+import types
 
 import tensorflow as tf
 
+from tensorflow_model_analysis import util as tfma_util
 from tensorflow_model_analysis.eval_saved_model import export
-from tensorflow_model_analysis.types_compat import Callable, Optional
+from typing import Callable, Dict, List, Optional, Text
 from tensorflow.python.estimator import gc
 from tensorflow.python.framework import errors_impl
 from tensorflow.python.platform import gfile
@@ -39,32 +42,54 @@ class _EvalSavedModelExporter(tf.estimator.Exporter):
   foundation for specialized `Exporter`s.
   """
 
-  def __init__(self, name,
-               eval_input_receiver_fn):
+  @tfma_util.kwargs_only
+  def __init__(
+      self,
+      name: Text,
+      eval_input_receiver_fn: Callable[[], export.EvalInputReceiverType],
+      serving_input_receiver_fn: Optional[
+          Callable[[], tf.estimator.export.ServingInputReceiver]] = None,
+      assets_extra: Optional[Dict[Text, Text]] = None):
     """Create an `Exporter` to use with `tf.estimator.EvalSpec`.
 
     Args:
       name: Unique name of this `Exporter` that is going to be used in the
         export path.
-      eval_input_receiver_fn: Eval input receiver function..
+      eval_input_receiver_fn: Eval input receiver function.
+      serving_input_receiver_fn: (Optional) Serving input receiver function. We
+        recommend that you provide this as well, so that the exported SavedModel
+        also contains the serving graph. If not provided, the serving graph will
+        not be included in the exported SavedModel.
+      assets_extra: An optional dict specifying how to populate the assets.extra
+        directory within the exported SavedModel.  Each key should give the
+        destination path (including the filename) relative to the assets.extra
+        directory.  The corresponding value gives the full path of the source
+        file to be copied.  For example, the simple case of copying a single
+        file without renaming it is specified as
+        `{'my_asset_file.txt': '/path/to/my_asset_file.txt'}`.
     """
     self._name = name
     self._eval_input_receiver_fn = eval_input_receiver_fn
+    self._serving_input_receiver_fn = serving_input_receiver_fn
+    self._assets_extra = assets_extra
 
   @property
-  def name(self):
+  def name(self) -> Text:
     return self._name
 
-  def export(self, estimator, export_path,
-             checkpoint_path, eval_result,
-             is_the_final_export):
+  def export(self, estimator: tf.estimator.Estimator, export_path: Text,
+             checkpoint_path: Optional[Text], eval_result: Optional[bytes],
+             is_the_final_export: bool) -> bytes:
     del is_the_final_export
 
     export_result = export.export_eval_savedmodel(
         estimator=estimator,
         export_dir_base=export_path,
         eval_input_receiver_fn=self._eval_input_receiver_fn,
-        checkpoint_path=checkpoint_path)
+        serving_input_receiver_fn=self._serving_input_receiver_fn,
+        assets_extra=self._assets_extra,
+        checkpoint_path=checkpoint_path,
+    )
 
     return export_result
 
@@ -75,25 +100,45 @@ class FinalExporter(tf.estimator.Exporter):
   This class performs a single export in the end of training.
   """
 
-  def __init__(self, name,
-               eval_input_receiver_fn):
+  @tfma_util.kwargs_only
+  def __init__(
+      self,
+      name: Text,
+      eval_input_receiver_fn: Callable[[], export.EvalInputReceiverType],
+      serving_input_receiver_fn: Optional[
+          Callable[[], tf.estimator.export.ServingInputReceiver]] = None,
+      assets_extra: Optional[Dict[Text, Text]] = None):
     """Create an `Exporter` to use with `tf.estimator.EvalSpec`.
 
     Args:
       name: Unique name of this `Exporter` that is going to be used in the
         export path.
       eval_input_receiver_fn: Eval input receiver function.
+      serving_input_receiver_fn: (Optional) Serving input receiver function. We
+        recommend that you provide this as well, so that the exported SavedModel
+        also contains the serving graph. If not privded, the serving graph will
+        not be included in the exported SavedModel.
+      assets_extra: An optional dict specifying how to populate the assets.extra
+        directory within the exported SavedModel.  Each key should give the
+        destination path (including the filename) relative to the assets.extra
+        directory.  The corresponding value gives the full path of the source
+        file to be copied.  For example, the simple case of copying a single
+        file without renaming it is specified as
+        `{'my_asset_file.txt': '/path/to/my_asset_file.txt'}`.
     """
     self._eval_saved_model_exporter = _EvalSavedModelExporter(
-        name, eval_input_receiver_fn)
+        name=name,
+        eval_input_receiver_fn=eval_input_receiver_fn,
+        serving_input_receiver_fn=serving_input_receiver_fn,
+        assets_extra=assets_extra)
 
   @property
-  def name(self):
+  def name(self) -> Text:
     return self._eval_saved_model_exporter.name
 
-  def export(self, estimator, export_path,
-             checkpoint_path, eval_result,
-             is_the_final_export):
+  def export(self, estimator: tf.estimator.Estimator, export_path: Text,
+             checkpoint_path: Optional[Text], eval_result: Optional[bytes],
+             is_the_final_export: bool) -> Optional[bytes]:
     if not is_the_final_export:
       return None
 
@@ -110,16 +155,24 @@ class LatestExporter(tf.estimator.Exporter):
   In addition to exporting, this class also garbage collects stale exports.
   """
 
-  def __init__(self,
-               name,
-               eval_input_receiver_fn,
-               exports_to_keep = 5):
+  @tfma_util.kwargs_only
+  def __init__(
+      self,
+      name: Text,
+      eval_input_receiver_fn: Callable[[], export.EvalInputReceiverType],
+      serving_input_receiver_fn: Optional[
+          Callable[[], tf.estimator.export.ServingInputReceiver]] = None,
+      exports_to_keep: int = 5):
     """Create an `Exporter` to use with `tf.estimator.EvalSpec`.
 
     Args:
       name: Unique name of this `Exporter` that is going to be used in the
         export path.
       eval_input_receiver_fn: Eval input receiver function.
+      serving_input_receiver_fn: (Optional) Serving input receiver function. We
+        recommend that you provide this as well, so that the exported SavedModel
+        also contains the serving graph. If not privded, the serving graph will
+        not be included in the exported SavedModel.
       exports_to_keep: Number of exports to keep.  Older exports will be
         garbage-collected.  Defaults to 5.  Set to `None` to disable garbage
         collection.
@@ -128,19 +181,21 @@ class LatestExporter(tf.estimator.Exporter):
       ValueError: if exports_to_keep is set to a non-positive value.
     """
     self._eval_saved_model_exporter = _EvalSavedModelExporter(
-        name, eval_input_receiver_fn)
+        name=name,
+        eval_input_receiver_fn=eval_input_receiver_fn,
+        serving_input_receiver_fn=serving_input_receiver_fn)
     self._exports_to_keep = exports_to_keep
     if exports_to_keep is not None and exports_to_keep <= 0:
       raise ValueError(
           '`exports_to_keep`, if provided, must be positive number')
 
   @property
-  def name(self):
-    return self._saved_model_exporter.name
+  def name(self) -> Text:
+    return self._eval_saved_model_exporter.name
 
-  def export(self, estimator, export_path,
-             checkpoint_path, eval_result,
-             is_the_final_export):
+  def export(self, estimator: tf.estimator.Estimator, export_path: Text,
+             checkpoint_path: Optional[Text], eval_result: Optional[bytes],
+             is_the_final_export: bool) -> bytes:
     export_result = self._eval_saved_model_exporter.export(
         estimator, export_path, checkpoint_path, eval_result,
         is_the_final_export)
@@ -148,7 +203,7 @@ class LatestExporter(tf.estimator.Exporter):
     self._garbage_collect_exports(export_path)
     return export_result
 
-  def _garbage_collect_exports(self, export_dir_base):
+  def _garbage_collect_exports(self, export_dir_base: Text):
     """Deletes older exports, retaining only a given number of the most recent.
 
     Export subdirectories are assumed to be named with monotonically increasing
@@ -178,3 +233,83 @@ class LatestExporter(tf.estimator.Exporter):
       except errors_impl.NotFoundError as e:
         tf_logging.warn('Can not delete %s recursively: %s', p.path, e)
     # pylint: enable=protected-access
+
+
+@contextlib.contextmanager
+def _remove_metrics(estimator: tf.estimator.Estimator,
+                    metrics_to_remove: List[Text]):
+  """Modifies the Estimator to make its model_fn return less metrics in EVAL.
+
+  Note that this only removes the metrics from the
+  EstimatorSpec.eval_metric_ops. It does not remove them from the graph or
+  undo any side-effects that they might have had (e.g. modifications to
+  METRIC_VARIABLES collections).
+
+  This is useful for when you use py_func, streaming metrics, or other metrics
+  incompatible with TFMA in your trainer. To keep these metrics in your trainer
+  (so they still show up in Tensorboard) and still use TFMA, you can call
+  remove_metrics on your Estimator before calling export_eval_savedmodel.
+
+  This is a context manager, so it can be used like:
+    with _remove_metrics(estimator, ['streaming_auc']):
+      tfma.export.export_eval_savedmodel(estimator, ...)
+
+  Args:
+    estimator: tf.estimator.Estimator to modify. Will be mutated in place.
+    metrics_to_remove: List of names of metrics to remove.
+
+  Yields:
+    Nothing.
+  """
+  old_call_model_fn = estimator._call_model_fn  # pylint: disable=protected-access
+
+  def wrapped_call_model_fn(unused_self, features, labels, mode, config):
+    result = old_call_model_fn(features, labels, mode, config)
+    if mode == tf.estimator.ModeKeys.EVAL:
+      filtered_eval_metric_ops = {}
+      for k, v in result.eval_metric_ops.items():
+        if k in metrics_to_remove:
+          continue
+        filtered_eval_metric_ops[k] = v
+      result = result._replace(eval_metric_ops=filtered_eval_metric_ops)
+    return result
+
+  estimator._call_model_fn = types.MethodType(  # pylint: disable=protected-access
+      wrapped_call_model_fn, estimator)
+
+  yield
+
+  estimator._call_model_fn = old_call_model_fn  # pylint: disable=protected-access
+
+
+def adapt_to_remove_metrics(exporter: tf.estimator.Exporter,
+                            metrics_to_remove: List[Text]
+                           ) -> tf.estimator.Exporter:
+  """Modifies the given exporter to remove metrics before export.
+
+  This is useful for when you use py_func, streaming metrics, or other metrics
+  incompatible with TFMA in your trainer. To keep these metrics in your trainer
+  (so they still show up in Tensorboard) and still use TFMA, you can call
+  adapt_to_remove_metrics on your TFMA exporter.
+
+  Args:
+    exporter: Exporter to modify. Will be mutated in place.
+    metrics_to_remove: List of names of metrics to remove.
+
+  Returns:
+    The mutated exporter, which will be modified in place. We also return it
+    so that this can be used in an expression.
+  """
+
+  old_export = exporter.export
+
+  def wrapped_export(unused_self, estimator: tf.estimator.Estimator,
+                     export_path: Text, checkpoint_path: Optional[Text],
+                     eval_result: Optional[bytes],
+                     is_the_final_export: bool) -> bytes:
+    with _remove_metrics(estimator, metrics_to_remove):
+      return old_export(estimator, export_path, checkpoint_path, eval_result,
+                        is_the_final_export)
+
+  exporter.export = types.MethodType(wrapped_export, exporter)
+  return exporter

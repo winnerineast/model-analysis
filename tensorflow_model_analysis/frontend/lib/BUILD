@@ -59,6 +59,7 @@ closure_js_library(
         "data.js",
     ],
     suppress = [
+        "JSC_MISSING_CONST_PROPERTY",
         "JSC_UNKNOWN_EXPR_TYPE",
         "JSC_UNRECOGNIZED_TYPE_ERROR",
         "JSC_UNUSED_LOCAL_ASSIGNMENT",
@@ -114,6 +115,7 @@ closure_js_library(
         "series-data.js",
     ],
     suppress = [
+        "JSC_MISSING_CONST_PROPERTY",
         "JSC_UNKNOWN_EXPR_TYPE",
         "JSC_UNRECOGNIZED_TYPE_ERROR",
         "JSC_UNUSED_LOCAL_ASSIGNMENT",
@@ -143,6 +145,7 @@ closure_js_library(
         "single-series-graph-data.js",
     ],
     suppress = [
+        "JSC_MISSING_CONST_PROPERTY",
         "JSC_UNKNOWN_EXPR_TYPE",
         "JSC_UNRECOGNIZED_TYPE_ERROR",
         "JSC_UNUSED_LOCAL_ASSIGNMENT",
@@ -166,18 +169,36 @@ closure_js_library(
     ],
 )
 
+closure_js_library(
+    name = "test-util",
+    srcs = [
+        "test-util.js",
+    ],
+    suppress = [
+        "JSC_UNKNOWN_EXPR_TYPE",
+        "JSC_UNRECOGNIZED_TYPE_ERROR",
+        "JSC_UNUSED_LOCAL_ASSIGNMENT",
+    ],
+)
+
 JS_LIB_EXTERNS = [
     "externs.js",
 ]
 
 ALL_EXTERNS = [
+    "svg-externs.js",
     "d3-externs.js",
-    "gviz-externs.js",
+    "d3-tip-externs.js",
 ] + JS_LIB_EXTERNS
 
 filegroup(
     name = "externs-list",
     srcs = JS_LIB_EXTERNS,
+)
+
+filegroup(
+    name = "all-externs-list",
+    srcs = ALL_EXTERNS,
 )
 
 # The externs needed to build the plugin dashboard and component demos.
@@ -196,7 +217,7 @@ closure_js_binary(
     name = "js-lib-bin",
     defs = [
         # Wrap the compiled js in an anonymous function to avoid name collision.
-        "--output_wrapper=\"(function() {%output%})()\"",
+        "--output_wrapper=\"(function() {%output%})();\"",
     ],
     entry_points = [
         "tfma.Data",

@@ -2,13 +2,17 @@
 
 # TensorFlow Model Analysis
 
+[![Python](https://img.shields.io/pypi/pyversions/tensorflow-model-analysis.svg?style=plastic)](https://github.com/tensorflow/model-analysis)
+[![PyPI](https://badge.fury.io/py/tensorflow-model-analysis.svg)](https://badge.fury.io/py/tensorflow-model-analysis)
+[![Documentation](https://img.shields.io/badge/api-reference-blue.svg)](https://www.tensorflow.org/tfx/model_analysis/api_docs/python/tfma)
+
 *TensorFlow Model Analysis* (TFMA) is a library for evaluating TensorFlow models.
 It allows users to evaluate their models on large amounts of data in a
 distributed manner, using the same metrics defined in their trainer. These
 metrics can be computed over different slices of data and visualized in Jupyter
 notebooks.
 
-![TFMA Slicing Metrics Browser](g3doc/images/tfma-slicing-metrics-browser.gif)
+![TFMA Slicing Metrics Browser](https://raw.githubusercontent.com/tensorflow/model-analysis/master/g3doc/images/tfma-slicing-metrics-browser.gif)
 
 Caution: TFMA may introduce backwards incompatible changes before version 1.0.
 
@@ -23,7 +27,7 @@ pip install tensorflow-model-analysis
 
 Currently, TFMA requires that TensorFlow is installed but does not have an
 explicit dependency on the TensorFlow PyPI package. See the
-[TensorFlow install guides](/install) for instructions.
+[TensorFlow install guides](https://www.tensorflow.org/install/) for instructions.
 
 To enable TFMA visualization in Jupyter Notebook:
 
@@ -47,7 +51,7 @@ designed to be extensible for other Apache Beam runners.
 ## Getting Started
 
 For instructions on using TFMA, see the [get started
-guide](g3doc/get_started.md) and try out the extensive [end-to-end example](examples/chicago_taxi/README.md).
+guide](https://github.com/tensorflow/model-analysis/blob/master/g3doc/get_started.md).
 
 ## Compatible Versions
 
@@ -55,12 +59,24 @@ The following table is the TFMA package versions that are compatible with each
 other. This is determined by our testing framework, but other *untested*
 combinations may also work.
 
-|tensorflow-model-analysis  |tensorflow    |apache-beam[gcp]|
-|---------------------------|--------------|----------------|
-|GitHub master              |1.9           |2.6.0           |
-|0.9.1                      |1.9           |2.6.0           |
-|0.9.0                      |1.9           |2.5.0           |
-|0.6.0                      |1.6           |2.4.0           |
+|tensorflow-model-analysis                                                           |tensorflow    |apache-beam[gcp]|
+|------------------------------------------------------------------------------------|--------------|----------------|
+|[GitHub master](https://github.com/tensorflow/model-analysis/blob/master/RELEASE.md)|nightly (1.x/2.x) |2.16.0      |
+|[0.15.4](https://github.com/tensorflow/model-analysis/blob/v0.15.4/RELEASE.md)      |1.15 / 2.0    |2.16.0          |
+|[0.15.3](https://github.com/tensorflow/model-analysis/blob/v0.15.3/RELEASE.md)      |1.15 / 2.0    |2.16.0          |
+|[0.15.2](https://github.com/tensorflow/model-analysis/blob/v0.15.2/RELEASE.md)      |1.15 / 2.0    |2.16.0          |
+|[0.15.1](https://github.com/tensorflow/model-analysis/blob/v0.15.1/RELEASE.md)      |1.15 / 2.0    |2.16.0          |
+|[0.15.0](https://github.com/tensorflow/model-analysis/blob/v0.15.0/RELEASE.md)      |1.15          |2.16.0          |
+|[0.14.0](https://github.com/tensorflow/model-analysis/blob/v0.14.0/RELEASE.md)      |1.14          |2.14.0          |
+|[0.13.1](https://github.com/tensorflow/model-analysis/blob/v0.13.1/RELEASE.md)      |1.13          |2.11.0          |
+|[0.13.0](https://github.com/tensorflow/model-analysis/blob/v0.13.0/RELEASE.md)      |1.13          |2.11.0          |
+|[0.12.1](https://github.com/tensorflow/model-analysis/blob/v0.12.1/RELEASE.md)      |1.12          |2.10.0          |
+|[0.12.0](https://github.com/tensorflow/model-analysis/blob/v0.12.0/RELEASE.md)      |1.12          |2.10.0          |
+|[0.11.0](https://github.com/tensorflow/model-analysis/blob/v0.11.0/RELEASE.md)      |1.11          |2.8.0           |
+|[0.9.2](https://github.com/tensorflow/model-analysis/blob/v0.9.2/RELEASE.md)        |1.9           |2.6.0           |
+|[0.9.1](https://github.com/tensorflow/model-analysis/blob/v0.9.1/RELEASE.md)        |1.10          |2.6.0           |
+|[0.9.0](https://github.com/tensorflow/model-analysis/blob/v0.9.0/RELEASE.md)        |1.9           |2.5.0           |
+|[0.6.0](https://github.com/tensorflow/model-analysis/blob/v0.6.0/RELEASE.md)        |1.6           |2.4.0           |
 
 ## Questions
 

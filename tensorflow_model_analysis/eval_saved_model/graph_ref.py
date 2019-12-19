@@ -18,14 +18,17 @@ This is an internal library for use only by load.py.
 
 from __future__ import absolute_import
 from __future__ import division
-
+# Standard __future__ imports
 from __future__ import print_function
 
-
+import collections
+# Standard Imports
 import tensorflow as tf
 from tensorflow_model_analysis import types
+from tensorflow_model_analysis.eval_saved_model import constants
 from tensorflow_model_analysis.eval_saved_model import encoding
-from tensorflow_model_analysis.types_compat import Dict, List, Union
+from tensorflow_model_analysis.eval_saved_model import util
+from typing import Dict, List, Optional, Text, Tuple, Union
 
 from google.protobuf import any_pb2
 from tensorflow.core.protobuf import meta_graph_pb2
@@ -33,11 +36,12 @@ from tensorflow.core.protobuf import meta_graph_pb2
 CollectionDefValueType = Union[float, int, bytes, any_pb2.Any]  # pylint: disable=invalid-name
 
 
-def extract_signature_outputs_with_prefix(
-    prefix,
-    # signature_outputs is not actually a Dict, but behaves like one
-    signature_outputs
-):
+def extract_signature_inputs_or_outputs_with_prefix(
+    prefix: Text,
+    # Inputs and outputs are not actually Dicts, but behave like them
+    signature_inputs_or_outputs: Dict[Text, meta_graph_pb2.TensorInfo],
+    key_if_single_element: Optional[Text] = None
+) -> Dict[Text, meta_graph_pb2.TensorInfo]:
   """Extracts signature outputs with the given prefix.
 
   This is the reverse of _wrap_and_check_metrics / _wrap_and_check_outputs and
@@ -45,7 +49,7 @@ def extract_signature_outputs_with_prefix(
 
   This is designed to extract structures from the  SignatureDef outputs map.
 
-   Structures of the following form:
+  Structures of the following form:
       <prefix>/key1
       <prefix>/key2
   will map to dictionary elements like so:
@@ -56,11 +60,13 @@ def extract_signature_outputs_with_prefix(
       <prefix>_extrastuff
       <prefix>morestuff
   will map to dictionary elements like so:
-      {<prefix: value1, <prefix>_extrastuff: value2, <prefix>morestuff: value3}
+      {<prefix>: value1, <prefix>_extrastuff: value2, <prefix>morestuff: value3}
 
   Args:
     prefix: Prefix to extract
-    signature_outputs: Signature outputs to extract from
+    signature_inputs_or_outputs: Signature inputs or outputs to extract from
+    key_if_single_element: Key to use in the dictionary if the SignatureDef map
+      had only one entry with key <prefix> representing a single tensor.
 
   Returns:
     Dictionary extracted as described above. The values will be the TensorInfo
@@ -69,11 +75,14 @@ def extract_signature_outputs_with_prefix(
   Raises:
     ValueError: There were duplicate keys.
   """
+  matched_prefix = False
   result = {}
-  for k, v in signature_outputs.items():
+  for k, v in signature_inputs_or_outputs.items():
     if k.startswith(prefix + '/'):
       key = k[len(prefix) + 1:]
     elif k.startswith(prefix):
+      if k == prefix:
+        matched_prefix = True
       key = k
     else:
       continue
@@ -81,15 +90,240 @@ def extract_signature_outputs_with_prefix(
     if key in result:
       raise ValueError(
           'key "%s" already in dictionary. you might have repeated keys. '
-          'prefix was "%s", signature_outputs were: %s' % (prefix, key,
-                                                           signature_outputs))
+          'prefix was "%s", signature_def values were: %s' %
+          (prefix, key, signature_inputs_or_outputs))
     result[key] = v
+
+  if key_if_single_element and matched_prefix and len(result) == 1:
+    return {key_if_single_element: result[prefix]}
+
   return result
 
 
-def get_node_map(meta_graph_def, prefix,
-                 node_suffixes
-                ):
+# TODO(b/119308261): Remove once all exported EvalSavedModels are updated.
+def load_legacy_inputs(
+    meta_graph_def: tf.compat.v1.MetaGraphDef,
+    signature_def: tf.compat.v1.MetaGraphDef.SignatureDefEntry,
+    graph: tf.Graph) -> Tuple[Dict[Text, types.TensorType], types.TensorType]:
+  """Loads legacy inputs.
+
+  Args:
+    meta_graph_def: MetaGraphDef to lookup nodes in.
+    signature_def: SignatureDef to lookup nodes in.
+    graph: TensorFlow graph to lookup the nodes in.
+
+  Returns:
+    Tuple of (inputs_map, input_refs_node)
+  """
+  input_node = tf.compat.v1.saved_model.utils.get_tensor_from_tensor_info(
+      list(signature_def.inputs.values())[0], graph)
+  try:
+    input_refs_node = get_node_in_graph(meta_graph_def,
+                                        encoding.EXAMPLE_REF_COLLECTION, graph)
+  except KeyError:
+    # If we can't find the ExampleRef collection, then this is probably a model
+    # created before we introduced the ExampleRef parameter to
+    # EvalInputReceiver. In that case, we default to a tensor of range(0,
+    # len(input_example)).
+    # TODO(b/117519999): Remove this backwards-compatibility shim once all
+    # exported EvalSavedModels have ExampleRef.
+    input_refs_node = tf.range(tf.size(input=input_node))
+  inputs_map = collections.OrderedDict(
+      {list(signature_def.inputs.keys())[0]: input_node})
+  return (inputs_map, input_refs_node)
+
+
+# TODO(b/119308261): Remove once all exported EvalSavedModels are updated.
+def load_legacy_features_and_labels(
+    meta_graph_def: tf.compat.v1.MetaGraphDef, graph: tf.Graph
+) -> Tuple[Dict[Text, types.TensorType], Dict[Text, types.TensorType]]:
+  """Loads legacy features and labels nodes.
+
+  Args:
+    meta_graph_def: MetaGraphDef to lookup nodes in.
+    graph: TensorFlow graph to lookup the nodes in.
+
+  Returns:
+    Tuple of (features_map, labels_map)
+  """
+  encoded_features_map = collections.OrderedDict(
+      get_node_map_in_graph(meta_graph_def, encoding.FEATURES_COLLECTION,
+                            [encoding.NODE_SUFFIX], graph))
+  features_map = collections.OrderedDict()
+  for key in encoded_features_map:
+    features_map[key] = encoded_features_map[key][encoding.NODE_SUFFIX]
+
+  encoded_labels_map = collections.OrderedDict(
+      get_node_map_in_graph(meta_graph_def, encoding.LABELS_COLLECTION,
+                            [encoding.NODE_SUFFIX], graph))
+  labels_map = collections.OrderedDict()
+  for key in encoded_labels_map:
+    labels_map[key] = encoded_labels_map[key][encoding.NODE_SUFFIX]
+
+  # Assume that KeyType is only Text
+  # pytype: disable=bad-return-type
+  return (features_map, labels_map)
+  # pytype: enable=bad-return-type
+
+
+def load_tfma_version(
+    signature_def: tf.compat.v1.MetaGraphDef.SignatureDefEntry,
+    graph: tf.Graph,
+) -> types.TensorType:
+  """Loads TFMA version information from signature_def.inputs.
+
+  Args:
+    signature_def: SignatureDef to lookup node in.
+    graph: TensorFlow graph to lookup the node in.
+
+  Returns:
+    TFMA version tensor.
+
+  Raises:
+    ValueError: If version not found signature_def.inputs.
+  """
+  if constants.SIGNATURE_DEF_TFMA_VERSION_KEY not in signature_def.inputs:
+    raise ValueError('tfma version not found in signature_def: %s' %
+                     signature_def)
+  return tf.compat.v1.saved_model.utils.get_tensor_from_tensor_info(
+      signature_def.inputs[constants.SIGNATURE_DEF_TFMA_VERSION_KEY], graph)
+
+
+def load_inputs(
+    signature_def: tf.compat.v1.MetaGraphDef.SignatureDefEntry,
+    graph: tf.Graph,
+) -> Tuple[Dict[Text, types.TensorType], types.TensorType]:
+  """Loads input nodes from signature_def.inputs.
+
+  Args:
+    signature_def: SignatureDef to lookup nodes in.
+    graph: TensorFlow graph to lookup the nodes in.
+
+  Returns:
+    Tuple of (inputs_map, input_refs_node) where inputs_map is an OrderedDict.
+
+  Raises:
+    ValueError: If inputs or input_refs not found signature_def.inputs.
+  """
+  inputs = extract_signature_inputs_or_outputs_with_prefix(
+      constants.SIGNATURE_DEF_INPUTS_PREFIX, signature_def.inputs)
+  if not inputs:
+    raise ValueError('no inputs found in signature_def: %s' % signature_def)
+  inputs_map = collections.OrderedDict()
+  # Sort by key name so stable ordering is used when passing to feed_list.
+  for k in sorted(inputs.keys()):
+    inputs_map[k] = tf.compat.v1.saved_model.utils.get_tensor_from_tensor_info(
+        inputs[k], graph)
+
+  if constants.SIGNATURE_DEF_INPUT_REFS_KEY not in signature_def.inputs:
+    raise ValueError('no input_refs found in signature_def: %s' % signature_def)
+  input_refs_node = tf.compat.v1.saved_model.utils.get_tensor_from_tensor_info(
+      signature_def.inputs[constants.SIGNATURE_DEF_INPUT_REFS_KEY], graph)
+  return (inputs_map, input_refs_node)
+
+
+def load_iterator_initializer_name(
+    signature_def: tf.compat.v1.MetaGraphDef.SignatureDefEntry,
+    graph: tf.Graph,
+) -> Optional[types.TensorType]:
+  """Loads iterator initializer name tensor from signature_def.inputs.
+
+  Args:
+    signature_def: SignatureDef to lookup initializer in.
+    graph: TensorFlow graph to lookup the initializer in.
+
+  Returns:
+    Tensor containing iterator initializer op name or None if not used.
+  """
+  if constants.SIGNATURE_DEF_ITERATOR_INITIALIZER_KEY in signature_def.inputs:
+    return tf.compat.v1.saved_model.utils.get_tensor_from_tensor_info(
+        signature_def.inputs[constants.SIGNATURE_DEF_ITERATOR_INITIALIZER_KEY],
+        graph)
+  return None
+
+
+def load_additional_inputs(
+    prefix: Text,
+    signature_def: tf.compat.v1.MetaGraphDef.SignatureDefEntry,
+    graph: tf.Graph,
+) -> Dict[Text, types.TensorType]:
+  """Loads additional input tensors from signature_def.inputs.
+
+  Args:
+    prefix: Prefix used for tensors in signature_def.inputs (e.g. features,
+      labels, etc)
+    signature_def: SignatureDef to lookup nodes in.
+    graph: TensorFlow graph to lookup the nodes in.
+
+  Returns:
+    OrderedDict of tensors.
+  """
+  tensors = collections.OrderedDict()
+  for k, v in extract_signature_inputs_or_outputs_with_prefix(
+      prefix, signature_def.inputs, util.default_dict_key(prefix)).items():
+    tensors[k] = tf.compat.v1.saved_model.utils.get_tensor_from_tensor_info(
+        v, graph)
+  return tensors
+
+
+def load_predictions(signature_def: tf.compat.v1.MetaGraphDef.SignatureDefEntry,
+                     graph: tf.Graph) -> Dict[Text, types.TensorType]:
+  """Loads prediction nodes from signature_def.outputs.
+
+  Args:
+    signature_def: SignatureDef to lookup nodes in.
+    graph: TensorFlow graph to lookup the nodes in.
+
+  Returns:
+    Predictions map as an OrderedDict.
+  """
+  # The canonical ordering we use here is simply the ordering we get
+  # from the predictions collection.
+  predictions = extract_signature_inputs_or_outputs_with_prefix(
+      constants.PREDICTIONS_NAME, signature_def.outputs,
+      util.default_dict_key(constants.PREDICTIONS_NAME))
+  predictions_map = collections.OrderedDict()
+  for k, v in predictions.items():
+    # Extract to dictionary with a single key for consistency with
+    # how features and labels are extracted.
+    predictions_map[
+        k] = tf.compat.v1.saved_model.utils.get_tensor_from_tensor_info(
+            v, graph)
+  return predictions_map
+
+
+def load_metrics(signature_def: tf.compat.v1.MetaGraphDef.SignatureDefEntry,
+                 graph: tf.Graph
+                ) -> Dict[types.FPLKeyType, Dict[Text, types.TensorType]]:
+  """Loads metric nodes from signature_def.outputs.
+
+  Args:
+    signature_def: SignatureDef to lookup nodes in.
+    graph: TensorFlow graph to lookup the nodes in.
+
+  Returns:
+    Metrics map as an OrderedDict.
+  """
+  metrics = extract_signature_inputs_or_outputs_with_prefix(
+      constants.METRICS_NAME, signature_def.outputs)
+  metrics_map = collections.defaultdict(dict)
+  for k, v in metrics.items():
+    node = tf.compat.v1.saved_model.utils.get_tensor_from_tensor_info(v, graph)
+
+    if k.endswith('/' + constants.METRIC_VALUE_SUFFIX):
+      key = k[:-len(constants.METRIC_VALUE_SUFFIX) - 1]
+      metrics_map[key][encoding.VALUE_OP_SUFFIX] = node
+    elif k.endswith('/' + constants.METRIC_UPDATE_SUFFIX):
+      key = k[:-len(constants.METRIC_UPDATE_SUFFIX) - 1]
+      metrics_map[key][encoding.UPDATE_OP_SUFFIX] = node
+    else:
+      raise ValueError('unrecognised suffix for metric. key was: %s' % k)
+  return metrics_map
+
+
+def get_node_map(meta_graph_def: meta_graph_pb2.MetaGraphDef, prefix: Text,
+                 node_suffixes: List[Text]
+                ) -> Dict[types.FPLKeyType, Dict[Text, CollectionDefValueType]]:
   """Get node map from meta_graph_def.
 
   This is designed to extract structures of the following form from the
@@ -134,7 +368,7 @@ def get_node_map(meta_graph_def, prefix,
   """
   node_lists = []
   for node_suffix in node_suffixes:
-    collection_def_name = '%s/%s' % (prefix, node_suffix)
+    collection_def_name = encoding.with_suffix(prefix, node_suffix)
     collection_def = meta_graph_def.collection_def.get(collection_def_name)
     if collection_def is None:
       # If we can't find the CollectionDef, append an empty list.
@@ -146,9 +380,8 @@ def get_node_map(meta_graph_def, prefix,
     else:
       node_lists.append(
           getattr(collection_def, collection_def.WhichOneof('kind')).value)
-  keys = meta_graph_def.collection_def['%s/%s' %
-                                       (prefix,
-                                        encoding.KEY_SUFFIX)].bytes_list.value
+  keys = meta_graph_def.collection_def[encoding.with_suffix(
+      prefix, encoding.KEY_SUFFIX)].bytes_list.value
   if not all([len(node_list) == len(keys) for node_list in node_lists]):
     raise ValueError('length of each node_list should match length of keys. '
                      'prefix was %s, node_lists were %s, keys was %s' %
@@ -160,9 +393,9 @@ def get_node_map(meta_graph_def, prefix,
 
 
 def get_node_map_in_graph(
-    meta_graph_def, prefix,
-    node_suffixes,
-    graph):
+    meta_graph_def: meta_graph_pb2.MetaGraphDef, prefix: Text,
+    node_suffixes: List[Text],
+    graph: tf.Graph) -> Dict[types.FPLKeyType, Dict[Text, types.TensorType]]:
   """Like get_node_map, but looks up the nodes in the given graph.
 
   Args:
@@ -182,14 +415,13 @@ def get_node_map_in_graph(
   result = {}
   for key, elems in node_map.items():
     result[key] = {
-        k: encoding.decode_tensor_node(graph, n)
-        for k, n in elems.items()
+        k: encoding.decode_tensor_node(graph, n) for k, n in elems.items()
     }
   return result
 
 
-def get_node_wrapped_tensor_info(meta_graph_def,
-                                 path):
+def get_node_wrapped_tensor_info(meta_graph_def: meta_graph_pb2.MetaGraphDef,
+                                 path: Text) -> any_pb2.Any:
   """Get the Any-wrapped TensorInfo for the node from the meta_graph_def.
 
   Args:
@@ -215,8 +447,8 @@ def get_node_wrapped_tensor_info(meta_graph_def,
   return meta_graph_def.collection_def[path].any_list.value[0]
 
 
-def get_node_in_graph(meta_graph_def, path,
-                      graph):
+def get_node_in_graph(meta_graph_def: meta_graph_pb2.MetaGraphDef, path: Text,
+                      graph: tf.Graph) -> types.TensorType:
   """Like get_node_wrapped_tensor_info, but looks up the node in the graph.
 
   Args:
@@ -229,6 +461,5 @@ def get_node_in_graph(meta_graph_def, path,
     The node in the graph with the name returned by
     get_node_wrapped_tensor_info.
   """
-  return encoding.decode_tensor_node(graph,
-                                     get_node_wrapped_tensor_info(
-                                         meta_graph_def, path))
+  return encoding.decode_tensor_node(
+      graph, get_node_wrapped_tensor_info(meta_graph_def, path))

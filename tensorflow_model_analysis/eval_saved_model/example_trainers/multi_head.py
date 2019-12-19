@@ -21,14 +21,17 @@ The true model for the Other head is language == 'other'.
 """
 from __future__ import absolute_import
 from __future__ import division
-
+# Standard __future__ imports
 from __future__ import print_function
 
-
+# Standard Imports
 
 import tensorflow as tf
 from tensorflow_model_analysis.eval_saved_model import export
 from tensorflow_model_analysis.eval_saved_model.example_trainers import util
+
+from tensorflow_estimator.python.estimator.head import binary_class_head  # pylint: disable=g-direct-tensorflow-import
+from tensorflow_estimator.python.estimator.head import multi_head  # pylint: disable=g-direct-tensorflow-import
 
 
 def simple_multi_head(export_path, eval_export_path):
@@ -36,20 +39,20 @@ def simple_multi_head(export_path, eval_export_path):
 
   def eval_input_receiver_fn():
     """Eval input receiver function."""
-    serialized_tf_example = tf.placeholder(
+    serialized_tf_example = tf.compat.v1.placeholder(
         dtype=tf.string, shape=[None], name='input_example_tensor')
 
-    language = tf.contrib.layers.sparse_column_with_keys(
+    language = tf.feature_column.categorical_column_with_vocabulary_list(
         'language', ['english', 'chinese', 'other'])
-    age = tf.contrib.layers.real_valued_column('age')
-    english_label = tf.contrib.layers.real_valued_column('english_label')
-    chinese_label = tf.contrib.layers.real_valued_column('chinese_label')
-    other_label = tf.contrib.layers.real_valued_column('other_label')
+    age = tf.feature_column.numeric_column('age')
+    english_label = tf.feature_column.numeric_column('english_label')
+    chinese_label = tf.feature_column.numeric_column('chinese_label')
+    other_label = tf.feature_column.numeric_column('other_label')
     all_features = [age, language, english_label, chinese_label, other_label]
-    feature_spec = tf.contrib.layers.create_feature_spec_for_parsing(
-        all_features)
+    feature_spec = tf.feature_column.make_parse_example_spec(all_features)
     receiver_tensors = {'examples': serialized_tf_example}
-    features = tf.parse_example(serialized_tf_example, feature_spec)
+    features = tf.io.parse_example(
+        serialized=serialized_tf_example, features=feature_spec)
 
     labels = {
         'english_head': features['english_label'],
@@ -80,28 +83,26 @@ def simple_multi_head(export_path, eval_export_path):
     }
     return features, labels
 
-  language = tf.contrib.layers.sparse_column_with_keys(
+  language = tf.feature_column.categorical_column_with_vocabulary_list(
       'language', ['english', 'chinese', 'other'])
-  age = tf.contrib.layers.real_valued_column('age')
+  age = tf.feature_column.numeric_column('age')
   all_features = [age, language]
-  feature_spec = tf.contrib.layers.create_feature_spec_for_parsing(all_features)
+  feature_spec = tf.feature_column.make_parse_example_spec(all_features)
 
-  english_head = tf.contrib.estimator.binary_classification_head(
-      name='english_head')
-  chinese_head = tf.contrib.estimator.binary_classification_head(
-      name='chinese_head')
-  other_head = tf.contrib.estimator.binary_classification_head(
-      name='other_head')
-  combined_head = tf.contrib.estimator.multi_head(
-      [english_head, chinese_head, other_head])
+  # TODO(b/130299739): Update with tf.estimator.BinaryClassHead and
+  #   tf.estimator.MultiHead
+  english_head = binary_class_head.BinaryClassHead(name='english_head')
+  chinese_head = binary_class_head.BinaryClassHead(name='chinese_head')
+  other_head = binary_class_head.BinaryClassHead(name='other_head')
+  combined_head = multi_head.MultiHead([english_head, chinese_head, other_head])
 
-  estimator = tf.contrib.estimator.DNNLinearCombinedEstimator(
+  estimator = tf.compat.v1.estimator.DNNLinearCombinedEstimator(
       head=combined_head,
       dnn_feature_columns=[],
-      dnn_optimizer=tf.train.AdagradOptimizer(learning_rate=0.01),
+      dnn_optimizer=tf.compat.v1.train.AdagradOptimizer(learning_rate=0.01),
       dnn_hidden_units=[],
       linear_feature_columns=[language, age],
-      linear_optimizer=tf.train.FtrlOptimizer(learning_rate=0.05))
+      linear_optimizer=tf.compat.v1.train.FtrlOptimizer(learning_rate=0.05))
   estimator.train(input_fn=input_fn, steps=1000)
 
   return util.export_model_and_eval_model(

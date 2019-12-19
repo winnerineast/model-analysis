@@ -17,7 +17,7 @@
   const browser = document.getElementById('browser');
   const metrics = [
     'logisticLoss', 'boundedAuc', 'calibration', 'precisionAtK',
-    'binaryConfusionMatrixFromRegression', 'plot', 'weightedExamples'
+    'binaryConfusionMatrixFromRegression', 'plot', 'weightedExamples',
   ];
   browser.metrics = metrics;
   browser.weightedExamplesColumn = 'weightedExamples';
@@ -31,7 +31,18 @@
         'totalWeightedExamples': 2000000,
         'auprc': 0.7,
         'boundedAuc': {'value': 0.61, 'lowerBound': 0.60, 'upperBound': 0.62},
-        'precisionAtK': [{'k': 2, 'value': 0.25, 'totalPositives': 100}],
+        'precisionAtK': { 'values': [{'cutoff': 2, 'value': 0.25}]},
+        'binaryConfusionMatrixFromRegression': {
+          'matrices': [{
+            'threshold': 0.5,
+            'boundedFalseNegatives': {'value': 0.61, 'lowerBound': 0.602, 'upperBound': 0.611},
+            'boundedTrueNegatives': {'value': 0.62, 'lowerBound': 0.602, 'upperBound': 0.622},
+            'boundedFalsePositives': {'value': 0.63, 'lowerBound': 0.602, 'upperBound': 0.633},
+            'boundedTruePositives': {'value': 0.64, 'lowerBound': 0.602, 'upperBound': 0.642},
+            'boundedPrecision': {'value': 0.6, 'lowerBound': 0.602, 'upperBound': 0.622},
+            'boundedRecall': {'value': 0.9, 'lowerBound': 0.602, 'upperBound': 0.622},
+          }],
+        },
         'weightedExamples': 123
       }
     },
@@ -45,16 +56,18 @@
         'auprc': 0.72,
         'boundedAuc':
             {'value': 0.612, 'lowerBound': 0.602, 'upperBound': 0.622},
-        'precisionAtK': [{'k': 2, 'value': 0.252, 'totalPositives': 100}],
-        'binaryConfusionMatrixFromRegression': [{
-          'binaryClassificationThreshold': {'predictionThreshold': 0.5},
-          'matrix': {
-            'f1Score': 0.8,
-            'accuracy': 0.7,
+        'precisionAtK': {'values': [{'cutoff': 2, 'value': 0.252}]},
+        'binaryConfusionMatrixFromRegression': {
+          'matrices': [{
+            'threshold': 0.5,
+            'falseNegatives': 10,
+            'trueNegatives': 20,
+            'falsePositives': 30,
+            'truePositives': 40,
             'precision': 0.6,
             'recall': 0.9,
-          }
-        }],
+          }],
+        },
         'weightedExamples': 123
       }
     },
@@ -68,9 +81,9 @@
         'auprc': 0.73,
         'boundedAuc':
             {'value': 0.613, 'lowerBound': 0.603, 'upperBound': 0.623},
-        'precisionAtK': [{'k': 2, 'value': 0.253, 'totalPositives': 100}],
-        'weightedExamples': 123
+        'precisionAtK': {'values': [{'cutoff': 2, 'value': 0.253}]},
+        'weightedExamples': 123,
       }
-    }
+    },
   ];
 })();

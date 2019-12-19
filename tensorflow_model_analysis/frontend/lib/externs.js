@@ -18,12 +18,12 @@
  */
 
 /**
- * @type {!Object}
+ * @const
  */
 var tfma = {};
 
 /**
- * @type {!Object}
+ * @const
  */
 tfma.BucketsWrapper = {};
 
@@ -40,7 +40,7 @@ tfma.BucketsWrapper.getCalibrationPlotData = function(
     buckets, fit, scale, color, size, newBucketSize, outputArray) {};
 
 /**
- * @type {!Object}
+ * @const
  */
 tfma.CellRenderer = {};
 
@@ -66,6 +66,31 @@ tfma.CellRenderer.registerRenderer = function(type, renderer, typeChecker) {};
  */
 tfma.CellRenderer.renderValueWithFormatOverride = function(
     value, opt_tableProvider, opt_override) {};
+
+/**
+ * @param {number|!Object} value
+ * @return {number}
+ */
+tfma.CellRenderer.maybeExtractBoundedValue = function(value) {};
+
+/**
+ * @param {!Object} value
+ * @return {boolean}
+ */
+tfma.CellRenderer.isBoundedValue = function(value) {};
+
+/**
+ * @param {!Object} value
+ * @return {boolean}
+ */
+tfma.CellRenderer.isRatioValue = function(value) {};
+
+/**
+ * @param {!Object} value
+ * @param {string} key
+ * @return {number}
+ */
+tfma.CellRenderer.extractFloatValue = function(value, key) {};
 
 /**
  * @constructor
@@ -157,12 +182,10 @@ tfma.Data.flattenMetrics = function(runs, metricsKey) {};
 tfma.Data.getAvailableMetrics = function(dataArrays, metricsFieldKey) {};
 
 /**
- * @param {!Array<!Object>} data
- * @param {string} metricsFieldKey
- * @param {function(!Object):!Object} plotDataGetter
+ * @param {!Object} plotData
+ * @return {!Array<string>}
  */
-tfma.Data.preprocessMaybeAddPlotData = function(
-    data, metricsFieldKey, plotDataGetter) {};
+tfma.Data.getAvailablePlotTypes = function(plotData) {};
 
 /**
  * @constructor
@@ -204,6 +227,9 @@ tfma.Column = {
  * @type {number}
  */
 tfma.FLOATING_POINT_PRECISION;
+
+/** @type {string} */
+tfma.KEY;
 
 /**
  * @constructor
@@ -248,6 +274,7 @@ tfma.MetricValueFormat = {
   INT64: '',
   FLOAT: '',
   ROW_ID: '',
+  VALUE_AT_CUTOFFS: '',
 };
 
 /**
@@ -265,6 +292,9 @@ tfma.MetricValueFormatSpec.prototype.type;
  */
 tfma.MetricValueFormatSpec.prototype.transform;
 
+/** @type {string} */
+tfma.METRIC_KEYS_AND_VALUES;
+
 /**
  * @enum {string}
  */
@@ -274,6 +304,8 @@ tfma.PlotDataFieldNames = {
   CONFUSION_MATRICES: '',
   MACRO_PRECISION_RECALL_CURVE_DATA: '',
   MICRO_PRECISION_RECALL_CURVE_DATA: '',
+  MULTI_CLASS_CONFUSION_MATRIX_DATA: '',
+  MULTI_LABEL_CONFUSION_MATRIX_DATA: '',
   PRECISION_RECALL_CURVE_DATA: '',
   WEIGHTED_PRECISION_RECALL_CURVE_DATA: '',
 };
@@ -306,11 +338,16 @@ tfma.PlotScale = {
  * @enum {string}
  */
 tfma.PlotTypes = {
+  ACCURACY_CHARTS: '',
   CALIBRATION_PLOT: '',
+  GAIN_CHART: '',
   PREDICTION_DISTRIBUTION: '',
   MACRO_PRECISION_RECALL_CURVE: '',
   MICRO_PRECISION_RECALL_CURVE: '',
+  MULTI_CLASS_CONFUSION_MATRIX: '',
+  MULTI_LABEL_CONFUSION_MATRIX: '',
   PRECISION_RECALL_CURVE: '',
+  RESIDUAL_PLOT: '',
   ROC_CURVE: '',
   WEIGHTED_PRECISION_RECALL_CURVE: '',
 };
@@ -321,6 +358,9 @@ tfma.PlotTypes = {
 tfma.PlotDataDisplay = {
   EXAMPLES_MAX_STEP: 0
 };
+
+/** @type {string} */
+tfma.PLOT_KEYS_AND_VALUES;
 
 /**
  * @constructor
@@ -495,3 +535,26 @@ tfma.SeriesDataHelper.EvalRun.prototype.data;
  * @constructor
  */
 tfma.SingleSeriesGraphData = function(metrics, data) {};
+
+/**
+ * @const
+ */
+tfma.Util = {};
+
+/**
+ * @param {!Object} configs
+ * @return {!Array<!Object>}
+ */
+tfma.Util.createConfigsList = function(configs) {};
+
+/**
+ * @param {!Object} metrics
+ * @param {!Array<!Object>} configsList
+ * @param {!Object<string>=} blacklist
+ * @return {!Object}
+ */
+tfma.Util.mergeMetricsForSelectedConfigsList = function(
+    metrics, configsList, blacklist) {};
+
+/** @type {string} */
+tfma.VALUE;

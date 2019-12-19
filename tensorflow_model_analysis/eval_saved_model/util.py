@@ -15,26 +15,44 @@
 
 from __future__ import absolute_import
 from __future__ import division
-
+# Standard __future__ imports
 from __future__ import print_function
 
 import numpy as np
+import six
 import tensorflow as tf
 from tensorflow_model_analysis import types
-from tensorflow_model_analysis.types_compat import List, Optional, Tuple
+from tensorflow_model_analysis import util
+from typing import Any, List, Callable, Optional, Text, Tuple
 
 from tensorflow.core.example import example_pb2
 
 
+def default_dict_key(prefix: Text) -> Text:
+  """Returns the default key to use with a dict associated with given prefix."""
+  return util.KEY_SEPARATOR + prefix
+
+
+def extract_tensor_maybe_dict(
+    prefix: Text,
+    dict_of_tensors: types.DictOfTensorType) -> types.TensorTypeMaybeDict:
+  """Returns tensor if single entry under default key else returns dict."""
+  default_key = default_dict_key(prefix)
+  if list(dict_of_tensors.keys()) == [default_key]:
+    return dict_of_tensors[default_key]
+  return dict_of_tensors
+
+
 def wrap_tensor_or_dict_of_tensors_in_identity(
-    tensor_or_dict_of_tensors
-):
+    tensor_or_dict_of_tensors: types.TensorTypeMaybeDict
+) -> types.TensorTypeMaybeDict:
+  # pyformat: disable
   """Wrap the given Tensor / dict of Tensors in tf.identity.
 
   Args:
     tensor_or_dict_of_tensors: Tensor or dict of Tensors to wrap around.
 
-  Workaround for TensorFlow issue #17568.
+  Workaround for TensorFlow issue #17568 (b/71769512).
 
   Returns:
     Tensor or dict of Tensors wrapped with tf.identity.
@@ -43,15 +61,16 @@ def wrap_tensor_or_dict_of_tensors_in_identity(
     ValueError: We could not wrap the given Tensor / dict of Tensors in
       tf.identity.
   """
+  # pyformat: enable
 
-  def _wrap_tensor_in_identity(tensor):
+  def _wrap_tensor_in_identity(tensor: types.TensorType) -> types.TensorType:
     if isinstance(tensor, tf.Tensor):
       return tf.identity(tensor)
     elif isinstance(tensor, tf.SparseTensor):
       return tf.SparseTensor(
-          indices=tensor.indices,
-          values=tensor.values,
-          dense_shape=tensor.dense_shape)
+          indices=tf.identity(tensor.indices),
+          values=tf.identity(tensor.values),
+          dense_shape=tf.identity(tensor.dense_shape))
     else:
       raise ValueError('could not wrap Tensor %s in identity' % str(tensor))
 
@@ -65,7 +84,7 @@ def wrap_tensor_or_dict_of_tensors_in_identity(
     return _wrap_tensor_in_identity(tensor_or_dict_of_tensors)
 
 
-def make_example(**kwargs):
+def make_example(**kwargs) -> example_pb2.Example:
   """Make a TensorFlow Example with the given fields.
 
   The arguments can be singleton values, or a list of values, e.g.
@@ -77,7 +96,7 @@ def make_example(**kwargs):
      constructed. The name of the field will be key, and the value will be
      value. The type will be deduced from the type of the value. Care must be
      taken for numeric types: 0 will be interpreted as an int, and 0.0 as a
-     float.
+       float.
 
   Returns:
     TensorFlow.Example with the corresponding fields set to the corresponding
@@ -95,8 +114,10 @@ def make_example(**kwargs):
       result.features.feature[key].float_list.value[:] = [value]
     elif isinstance(value, int):
       result.features.feature[key].int64_list.value[:] = [value]
-    elif isinstance(value, str):
+    elif isinstance(value, six.binary_type):
       result.features.feature[key].bytes_list.value[:] = [value]
+    elif isinstance(value, six.text_type):
+      result.features.feature[key].bytes_list.value[:] = [value.encode('utf8')]
     elif isinstance(value, list):
       if len(value) == 0:  # pylint: disable=g-explicit-length-test
         raise ValueError('empty lists not allowed, but field %s was an empty '
@@ -105,25 +126,30 @@ def make_example(**kwargs):
         result.features.feature[key].float_list.value[:] = value
       elif isinstance(value[0], int):
         result.features.feature[key].int64_list.value[:] = value
-      elif isinstance(value[0], str):
+      elif isinstance(value[0], six.binary_type):
         result.features.feature[key].bytes_list.value[:] = value
+      elif isinstance(value[0], six.text_type):
+        result.features.feature[key].bytes_list.value[:] = [
+            v.encode('utf8') for v in value
+        ]
       else:
-        raise TypeError('field %s was a list, but the first element had '
-                        'unknown type %s' % key, type(value[0]))
+        raise TypeError(
+            'field %s was a list, but the first element had '
+            'unknown type %s' % key, type(value[0]))
     else:
       raise TypeError('unrecognised type for field %s: type %s' %
                       (key, type(value)))
   return result
 
 
-def _copy_shape_zero_rows(shape):
+def _copy_shape_zero_rows(shape: Tuple[int, ...]) -> Tuple[int, ...]:
   """Return a copy of given shape with the number of rows zeroed out."""
   temp = list(shape)
   temp[0] = 0
   return tuple(temp)
 
 
-def _dense_concat_rows(arrays):
+def _dense_concat_rows(arrays: List[np.ndarray]) -> np.ndarray:
   """Concat a list of np.arrays along rows.
 
   This is similar to (but not the same as) np.concatenate(arrays, axis=0),
@@ -209,7 +235,8 @@ def _dense_concat_rows(arrays):
 
 
 def _sparse_concat_rows(
-    sparse_tensor_values):
+    sparse_tensor_values: List[tf.compat.v1.SparseTensorValue]
+) -> tf.compat.v1.SparseTensorValue:
   """Concat a list of SparseTensorValues along rows.
 
   This is similar to (but not the same as)
@@ -257,9 +284,11 @@ def _sparse_concat_rows(
   # We need this because we need to preserve the shape of these arrays,
   # even if their batch dimension is 0.
   empty_indices_with_shape = np.zeros(
-      _copy_shape_zero_rows(sparse_tensor_values[0].indices.shape))
+      _copy_shape_zero_rows(sparse_tensor_values[0].indices.shape),
+      dtype=sparse_tensor_values[0].indices.dtype)
   empty_values_with_shape = np.zeros(
-      _copy_shape_zero_rows(sparse_tensor_values[0].values.shape))
+      _copy_shape_zero_rows(sparse_tensor_values[0].values.shape),
+      dtype=sparse_tensor_values[0].values.dtype)
 
   indices = []
 
@@ -274,27 +303,33 @@ def _sparse_concat_rows(
     if cur_indices.size == 0:
       # Empty SparseTensorValue.
       continue
-    cur_indices[:, 0, Ellipsis] += row
+    cur_indices[:, 0, ...] += row
     indices.extend(cur_indices.tolist())
     values.extend(sparse_tensor.values)
     if sparse_tensor.dense_shape[0] != 1:
       raise ValueError(
           'each sparse_tensor_value should only have one row, but %s had '
           'shape %s' % (sparse_tensor, sparse_tensor.dense_shape))
-    dense_shape_max = np.amax(
-        [dense_shape_max, sparse_tensor.dense_shape], axis=0)
+    dense_shape_max = np.amax([dense_shape_max, sparse_tensor.dense_shape],
+                              axis=0)
 
   # The final dense shape is the max of dense shapes of all the sparse tensor
   # values, except the number of rows should be the batch size.
   dense_shape_max[0] = len(sparse_tensor_values)
-  return tf.SparseTensorValue(
-      indices=np.array(indices) if indices else empty_indices_with_shape,
-      values=np.array(values) if values else empty_values_with_shape,
+
+  # pylint: disable=g-long-ternary
+  return tf.compat.v1.SparseTensorValue(
+      indices=(np.array(indices, dtype=empty_indices_with_shape.dtype)
+               if indices else empty_indices_with_shape),
+      values=(np.array(values, dtype=empty_values_with_shape.dtype)
+              if values else empty_values_with_shape),
       dense_shape=dense_shape_max)
+  # pylint: enable=g-long-ternary
 
 
 def _sparse_slice_rows(
-    sparse_tensor_value):
+    sparse_tensor_value: tf.compat.v1.SparseTensorValue
+) -> List[tf.compat.v1.SparseTensorValue]:
   """Returns a list of single rows of a SparseTensorValue.
 
   This is equivalent to:
@@ -315,14 +350,18 @@ def _sparse_slice_rows(
   # We need this because we need to preserve the shape of these arrays,
   # even if their batch dimension is 0.
   empty_indices_with_shape = np.zeros(
-      _copy_shape_zero_rows(sparse_tensor_value.indices.shape))
+      _copy_shape_zero_rows(sparse_tensor_value.indices.shape),
+      dtype=sparse_tensor_value.indices.dtype)
   empty_values_with_shape = np.zeros(
-      _copy_shape_zero_rows(sparse_tensor_value.values.shape))
+      _copy_shape_zero_rows(sparse_tensor_value.values.shape),
+      dtype=sparse_tensor_value.values.dtype)
 
   if sparse_tensor_value.indices.size > 0:
-    sorted_indices, sorted_values = zip(*sorted(
-        zip(map(list, sparse_tensor_value.indices), sparse_tensor_value.values),
-        key=lambda (index, value): index))
+    indices = sparse_tensor_value.indices
+    # Sort indices matrix by rows, treating each row as a coordinate
+    argsort_indices = np.lexsort(np.transpose(indices)[::-1])
+    sorted_indices = indices[argsort_indices]
+    sorted_values = sparse_tensor_value.values[argsort_indices]
   else:
     sorted_indices = []
     sorted_values = []
@@ -349,17 +388,34 @@ def _sparse_slice_rows(
       values.append(sorted_values[offset])
       offset += 1
 
+    # We treat each split SparseTensorValue as having dense_shape equal to the
+    # maximum index in each dimension (+1 for zero-index).
+    if indices:
+      dense_shape[1:] = [
+          max([index[i]
+               for index in indices]) + 1
+          for i in range(1, len(indices[0]))
+      ]
+    # For empty examples, we should have 0 in all other dimensions for the
+    # dense_shape.
+    else:
+      dense_shape[1:] = [0] * (len(original_dense_shape) - 1)
+
+    # pylint: disable=g-long-ternary
     result.append(
-        tf.SparseTensorValue(
-            indices=np.array(indices) if indices else empty_indices_with_shape,
-            values=np.array(values) if values else empty_values_with_shape,
+        tf.compat.v1.SparseTensorValue(
+            indices=(np.array(indices, dtype=empty_indices_with_shape.dtype)
+                     if indices else empty_indices_with_shape),
+            values=(np.array(values, dtype=empty_values_with_shape.dtype)
+                    if values else empty_values_with_shape),
             dense_shape=np.array(dense_shape)))
+    # pylint: enable=g-long-ternary
 
   return result
 
 
 def split_tensor_value(
-    tensor_value):
+    tensor_value: types.TensorValue) -> List[types.TensorValue]:
   """Split a single batch of Tensor values into a list of Tensor values.
 
   Args:
@@ -372,23 +428,27 @@ def split_tensor_value(
   Raises:
     TypeError: tensor_value had unknown type.
   """
-  if isinstance(tensor_value, tf.SparseTensorValue):
+  if isinstance(tensor_value, tf.compat.v1.SparseTensorValue):
     return _sparse_slice_rows(tensor_value)
   elif isinstance(tensor_value, np.ndarray):
-    return np.split(
-        tensor_value, indices_or_sections=tensor_value.shape[0], axis=0)
+    if tensor_value.shape[0] != 0:
+      return np.split(
+          tensor_value, indices_or_sections=tensor_value.shape[0], axis=0)
+    else:
+      # The result value's shape must match the shape of `tensor_value`.
+      return np.zeros_like(tensor_value)
   else:
     raise TypeError('tensor_value had unknown type: %s, value was: %s' %
                     (type(tensor_value), tensor_value))
 
 
-def merge_tensor_values(tensor_values
-                       ):
+def merge_tensor_values(
+    tensor_values: List[types.TensorValue]) -> Optional[types.TensorValue]:
   """Merge a list of Tensor values into a single batch of Tensor values.
 
   Args:
-    tensor_values: A list of Tensor values, all fetched from the same node
-      in the same graph. Each Tensor value should be for a single example.
+    tensor_values: A list of Tensor values, all fetched from the same node in
+      the same graph. Each Tensor value should be for a single example.
 
   Returns:
     A single Tensor value that represents a batch of all the Tensor values
@@ -402,16 +462,70 @@ def merge_tensor_values(tensor_values
   if not tensor_values:
     return None
 
-  if isinstance(tensor_values[0], tf.SparseTensorValue):
+  if isinstance(tensor_values[0], tf.compat.v1.SparseTensorValue):
     # Check batch sizes.
     for tensor_value in tensor_values:
       if tensor_value.dense_shape[0] > 1:
-        raise ValueError(
-            'expecting SparseTensor to be for only 1 example. '
-            'but got dense_shape %s instead' % tensor_value.dense_shape)
+        raise ValueError('expecting SparseTensor to be for only 1 example. '
+                         'but got dense_shape %s instead' %
+                         tensor_value.dense_shape)
     return _sparse_concat_rows(tensor_values)
   elif isinstance(tensor_values[0], np.ndarray):
     return _dense_concat_rows(tensor_values)
   else:
     raise TypeError('tensor_values[0] had unknown type: %s, value was: %s' %
                     (type(tensor_values[0]), tensor_values[0]))
+
+
+def add_build_data_collection():
+  return
+
+
+def export_legacy_eval_savedmodel(
+    estimator,
+    export_dir_base: Text,
+    eval_input_receiver_fn: Callable[[], Any],
+    serving_input_receiver_fn: Optional[Callable[
+        [], tf.estimator.export.ServingInputReceiver]] = None,
+    checkpoint_path: Optional[Text] = None) -> Optional[bytes]:
+  """Exports a legacy EvalSavedModel for the given estimator.
+
+  Args:
+    estimator: Estimator to export the graph for.
+    export_dir_base: Base path for export. Graph will be exported into a
+      subdirectory of this base path.
+    eval_input_receiver_fn: Eval input receiver function.
+    serving_input_receiver_fn: (Optional) Serving input receiver function. We
+      recommend that you provide this as well, so that the exported SavedModel
+      also contains the serving graph. If not privded, the serving graph will
+      not be included in the exported SavedModel.
+    checkpoint_path: Path to a specific checkpoint to export. If set to None,
+      exports the latest checkpoint.
+
+  Returns:
+    Path to the directory where the EvalSavedModel was exported or None if
+    legacy export not required.
+
+  Raises:
+    ValueError: Could not find a checkpoint to export.
+  """
+  del estimator
+  del export_dir_base
+  del eval_input_receiver_fn,
+  del serving_input_receiver_fn
+  del checkpoint_path
+  return
+
+
+def legacy_export_strategy(
+    eval_input_receiver_fn: Callable[[], Any],
+    serving_input_receiver_fn: Optional[Callable[
+        [], tf.estimator.export.ServingInputReceiver]] = None,
+    exports_to_keep: Optional[int] = 5,
+    export_eval_savedmodel_fn: Callable[..., Any] = None) -> Any:
+  """Creates legacy export strategy using the given export_fn."""
+  del eval_input_receiver_fn
+  del serving_input_receiver_fn
+  del exports_to_keep
+  del export_eval_savedmodel_fn
+  raise NotImplementedError('legacy ExportStrategy no longer supported')

@@ -55,7 +55,10 @@ class SeriesData {
     this.evalRuns_ = this.helper_.sortEvalRuns(evalRuns, modelCentric);
   }
 
-  /** @override */
+  /**
+   * @override
+   * @suppress {missingProperties} getMetricValue is unknown on 'data'
+   */
   getLineChartData(metric) {
     const totalEntries = this.evalRuns_.length;
     return this.evalRuns_.map((evalRun, index) => {
@@ -67,6 +70,7 @@ class SeriesData {
           // beginning of the list should show up at the end of the time series
           // plot. As a result, totalEntries - index is used as back up value in
           // time series plot.
+          // @bug 76103045
           'v': this.getLineChartXCoord_(config, totalEntries - index),
           'f': this.helper_.getModelHeader() + ' ' +
               this.helper_.getModelDisplayText(config) + ' at ' +
@@ -97,15 +101,20 @@ class SeriesData {
     return typeof value == 'number' ? value : index;
   }
 
-  /** @override */
+  /**
+   * @override
+   * @suppress {missingProperties} getAllMetricValues is unknown on 'data'
+   */
   getDataTable() {
     const helper = this.helper_;
     return this.evalRuns_.map(evalRun => {
       const values = evalRun.data.getAllMetricValues('');
       const config = evalRun.config;
-      return [
-        helper.getModelDisplayText(config), helper.getDataDisplayText(config)
-      ].concat(values);
+      const modelText = helper.getModelDisplayText(config);
+      const dataText = helper.getDataDisplayText(config);
+      const column1 = this.modelCentric_ ? modelText : dataText;
+      const column2 = this.modelCentric_ ? dataText : modelText;
+      return [column1, column2].concat(values);
     });
   }
 
@@ -152,8 +161,11 @@ class SeriesData {
 
   /** @override */
   getHeader(requiredColumns) {
-    return [this.helper_.getModelHeader(), this.helper_.getDataHeader()].concat(
-        requiredColumns);
+    const model = this.helper_.getModelHeader();
+    const data = this.helper_.getDataHeader();
+    const column1 = this.modelCentric_ ? model : data;
+    const column2 = this.modelCentric_ ? data : model;
+    return [column1, column2].concat(requiredColumns);
   }
 
   /** @override */

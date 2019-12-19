@@ -20,14 +20,13 @@ from __future__ import print_function
 import os
 import platform
 import subprocess
-from subprocess import check_call
 import sys
 from distutils import log
-from distutils.command.build_py import build_py as _build_py
 from distutils.spawn import find_executable
 from setuptools import Command
 from setuptools import find_packages
 from setuptools import setup
+from setuptools.command.build_py import build_py as _build_py
 from setuptools.command.egg_info import egg_info
 from setuptools.command.sdist import sdist
 
@@ -48,7 +47,7 @@ else:
 # Get version from version module.
 with open('tensorflow_model_analysis/version.py') as fp:
   globals_dict = {}
-  exec (fp.read(), globals_dict)  # pylint: disable=exec-used
+  exec(fp.read(), globals_dict)  # pylint: disable=exec-used
 __version__ = globals_dict['VERSION_STRING']
 
 here = os.path.dirname(os.path.abspath(__file__))
@@ -104,6 +103,8 @@ class build_py(_build_py):  # pylint: disable=invalid-name
 
   def run(self):
     # Generate necessary .proto file if it doesn't exist.
+    generate_proto('tensorflow_model_analysis/proto/config.proto', False)
+    # Generate necessary .proto file if it doesn't exist.
     generate_proto('tensorflow_model_analysis/proto/metrics_for_slice.proto',
                    False)
     # _build_py is an old-style class, so super() doesn't work.
@@ -114,6 +115,7 @@ def js_prerelease(command, strict=False):
   """Decorator for building minified js/css prior to another command."""
 
   class DecoratedCommand(command):
+    """Decorated command."""
 
     def run(self):
       jsdeps = self.distribution.get_command_obj('jsdeps')
@@ -164,7 +166,7 @@ class NPM(Command):
       os.path.join(here, 'tensorflow_model_analysis', 'static', 'extension.js'),
       os.path.join(here, 'tensorflow_model_analysis', 'static', 'index.js'),
       os.path.join(here, 'tensorflow_model_analysis', 'static',
-                   'vulcanized_template.html'),
+                   'vulcanized_tfma.js'),
   ]
 
   def initialize_options(self):
@@ -183,7 +185,7 @@ class NPM(Command):
   def has_npm(self):
     npm_name = self.get_npm_name()
     try:
-      check_call([npm_name, '--version'])
+      subprocess.check_call([npm_name, '--version'])
       return True
     except:  # pylint: disable=bare-except
       return False
@@ -208,11 +210,10 @@ class NPM(Command):
       log.info(
           'Installing build dependencies with npm.  This may take a while...')
       npm_name = self.get_npm_name()
-      check_call(
-          [npm_name, 'install'],
-          cwd=node_root,
-          stdout=sys.stdout,
-          stderr=sys.stderr)
+      subprocess.check_call([npm_name, 'install'],
+                            cwd=node_root,
+                            stdout=sys.stdout,
+                            stderr=sys.stderr)
       os.utime(self.node_modules, None)
 
     for t in self.targets:
@@ -227,51 +228,50 @@ class NPM(Command):
     update_package_data(self.distribution)
 
 
+# Get the long description from the README file.
+with open('README.md') as fp:
+  _LONG_DESCRIPTION = fp.read()
+
 setup_args = {
-    'name':
-        'tensorflow_model_analysis',
-    'version':
-        __version__,
-    'description':
-        'A library for analyzing TensorFlow models',
-    'include_package_data':
-        True,
+    'name': 'tensorflow_model_analysis',
+    'version': __version__,
+    'description': 'A library for analyzing TensorFlow models',
+    'long_description': _LONG_DESCRIPTION,
+    'long_description_content_type': 'text/markdown',
+    'include_package_data': True,
     'data_files': [('share/jupyter/nbextensions/tfma_widget_js', [
         'tensorflow_model_analysis/static/extension.js',
         'tensorflow_model_analysis/static/index.js',
         'tensorflow_model_analysis/static/index.js.map',
-        'tensorflow_model_analysis/static/vulcanized_template.html',
+        'tensorflow_model_analysis/static/vulcanized_tfma.js',
     ]),],
+    # Make sure to sync the versions of common dependencies (numpy, six, and
+    # protobuf) with TF.
     'install_requires': [
-        'apache-beam[gcp]>=2.6,<3',
-        'grpc-google-iam-v1==0.11.1',
-        'numpy>=1.10,<2',
-        'jupyter>=1.0,<2',
-        'ipywidgets>=7.0,<8',
-        # TF now requires protobuf>=3.6.0.
-        'protobuf>=3.6.0,<4',
-        # For apitools.
-        'six>=1.9,<2',
-        'tensorflow-transform>=0.8,<1',
+        # Sort alphabetically
+        'apache-beam[gcp]>=2.16,<3',
+        'ipywidgets>=7,<8',
+        'jupyter>=1,<2',
+        'numpy>=1.16,<2',
+        'protobuf>=3.7,<4',
+        # TODO(b/126957988): Stop pinning scipy when possible.
+        'scipy==1.1.0',
+        'six>=1.12,<2',
+        'tensorflow>=1.15,<3',
+        'tfx-bsl>=0.15.1,<0.17'
     ],
-    'python_requires':
-        '>=2.7,<3',
-    'packages':
-        find_packages(),
-    'zip_safe':
-        False,
+    'python_requires': '>=2.7,!=3.0.*,!=3.1.*,!=3.2.*,!=3.3.*,!=3.4.*,<4',
+    'packages': find_packages(),
+    'zip_safe': False,
     'cmdclass': {
         'build_py': js_prerelease(build_py),
         'egg_info': js_prerelease(egg_info),
         'sdist': js_prerelease(sdist, strict=True),
         'jsdeps': NPM,
     },
-    'author':
-        'Google LLC',
-    'author_email':
-        'tensorflow-extended-dev@googlegroups.com',
-    'license':
-        'Apache 2.0',
+    'author': 'Google LLC',
+    'author_email': 'tensorflow-extended-dev@googlegroups.com',
+    'license': 'Apache 2.0',
     'classifiers': [
         'Development Status :: 4 - Beta',
         'Intended Audience :: Developers',
@@ -282,7 +282,10 @@ setup_args = {
         'Programming Language :: Python',
         'Programming Language :: Python :: 2',
         'Programming Language :: Python :: 2.7',
-        'Programming Language :: Python :: 2 :: Only',
+        'Programming Language :: Python :: 3',
+        'Programming Language :: Python :: 3.5',
+        'Programming Language :: Python :: 3.6',
+        'Programming Language :: Python :: 3.7',
         'Topic :: Scientific/Engineering',
         'Topic :: Scientific/Engineering :: Mathematics',
         'Topic :: Scientific/Engineering :: Artificial Intelligence',
@@ -292,6 +295,9 @@ setup_args = {
     ],
     'namespace_packages': [],
     'requires': [],
+    'keywords': 'tensorflow model analysis tfx',
+    'url': 'https://www.tensorflow.org/tfx/model_analysis',
+    'download_url': 'https://github.com/tensorflow/model-analysis/tags',
 }
 
 setup(**setup_args)

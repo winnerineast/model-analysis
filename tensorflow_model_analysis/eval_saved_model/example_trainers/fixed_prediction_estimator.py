@@ -17,10 +17,10 @@ This model always predicts the value of the "prediction" feature.
 """
 from __future__ import absolute_import
 from __future__ import division
-
+# Standard __future__ imports
 from __future__ import print_function
 
-
+# Standard Imports
 
 import tensorflow as tf
 from tensorflow_model_analysis.eval_saved_model import export
@@ -30,15 +30,23 @@ from tensorflow.python.estimator.canned import metric_keys
 from tensorflow.python.estimator.canned import prediction_keys
 
 
-def simple_fixed_prediction_estimator(
-    export_path,
-    eval_export_path,
+def get_simple_fixed_prediction_estimator_and_metadata(
     output_prediction_key=prediction_keys.PredictionKeys.PREDICTIONS):
-  """Exports a simple fixed prediction estimator."""
+  """Returns a simple fixed prediction estimator and metadata.
 
-  def model_fn(features, labels, mode, params):
+  Exposed for use with ExporterTest.
+
+  Args:
+    output_prediction_key: Output prediction key.
+
+  Returns:
+    Dictionary containing estimator, eval_input_receiver_fn,
+    serving_input_receiver_fn, train_input_fn and model_fn.
+  """
+
+  def model_fn(features, labels, mode, config):
     """Model function for custom estimator."""
-    del params
+    del config
     predictions = features['prediction']
 
     if output_prediction_key is not None:
@@ -55,15 +63,14 @@ def simple_fixed_prediction_estimator(
           mode=mode,
           predictions=predictions_dict,
           export_outputs={
-              tf.saved_model.signature_constants.
-              DEFAULT_SERVING_SIGNATURE_DEF_KEY:
+              tf.saved_model.DEFAULT_SERVING_SIGNATURE_DEF_KEY:
                   tf.estimator.export.RegressionOutput(predictions)
           })
 
-    loss = tf.losses.mean_squared_error(predictions, labels)
-    train_op = tf.assign_add(tf.train.get_global_step(), 1)
+    loss = tf.compat.v1.losses.mean_squared_error(predictions, labels)
+    train_op = tf.compat.v1.assign_add(tf.compat.v1.train.get_global_step(), 1)
     eval_metric_ops = {
-        metric_keys.MetricKeys.LOSS_MEAN: tf.metrics.mean(loss),
+        metric_keys.MetricKeys.LOSS_MEAN: tf.compat.v1.metrics.mean(loss),
     }
 
     return tf.estimator.EstimatorSpec(
@@ -80,20 +87,40 @@ def simple_fixed_prediction_estimator(
     }, tf.constant([[1.0], [2.0], [3.0], [4.0]]),
 
   estimator = tf.estimator.Estimator(model_fn=model_fn)
-  estimator.train(input_fn=train_input_fn, steps=1)
 
-  feature_spec = {'prediction': tf.FixedLenFeature([1], dtype=tf.float32)}
+  feature_spec = {'prediction': tf.io.FixedLenFeature([1], dtype=tf.float32)}
   eval_feature_spec = {
-      'prediction': tf.FixedLenFeature([1], dtype=tf.float32),
-      'label': tf.FixedLenFeature([1], dtype=tf.float32),
+      'prediction': tf.io.FixedLenFeature([1], dtype=tf.float32),
+      'label': tf.io.FixedLenFeature([1], dtype=tf.float32),
   }
 
-  return util.export_model_and_eval_model(
-      estimator=estimator,
-      serving_input_receiver_fn=(
-          tf.estimator.export.build_parsing_serving_input_receiver_fn(
+  return {
+      'estimator':
+          estimator,
+      'serving_input_receiver_fn':
+          (tf.estimator.export.build_parsing_serving_input_receiver_fn(
               feature_spec)),
-      eval_input_receiver_fn=export.build_parsing_eval_input_receiver_fn(
-          eval_feature_spec, label_key='label'),
+      'eval_input_receiver_fn':
+          export.build_parsing_eval_input_receiver_fn(
+              eval_feature_spec, label_key='label'),
+      'train_input_fn':
+          train_input_fn,
+      'model_fn':
+          model_fn,
+  }
+
+
+def simple_fixed_prediction_estimator(
+    export_path,
+    eval_export_path,
+    output_prediction_key=prediction_keys.PredictionKeys.PREDICTIONS):
+  estimator_metadata = get_simple_fixed_prediction_estimator_and_metadata(
+      output_prediction_key)
+  estimator_metadata['estimator'].train(
+      input_fn=estimator_metadata['train_input_fn'], steps=1)
+  return util.export_model_and_eval_model(
+      estimator=estimator_metadata['estimator'],
+      serving_input_receiver_fn=estimator_metadata['serving_input_receiver_fn'],
+      eval_input_receiver_fn=estimator_metadata['eval_input_receiver_fn'],
       export_path=export_path,
       eval_export_path=eval_export_path)

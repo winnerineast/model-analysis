@@ -23,7 +23,7 @@
 
   const text = document.getElementById('text');
   chart.addEventListener('select', (e) => {
-    text.innerText = 'Row ' + e.detail.point.row + ' selected';
+    text.innerText = 'Row ' + e.detail['point']['row'] + ' selected';
   });
   chart.addEventListener('clear-selection', () => {
     text.innerText = '';

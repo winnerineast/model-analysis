@@ -16,17 +16,17 @@
 The true model is language == 'english'.
 
 The model has the standard metrics added by LinearClassifier, plus additional
-metrics added using tf.contrib.estimator.
+metrics added using tf.estimator.
 
 This model also extracts an additional slice_key feature for evaluation
 (this feature is not used in training).
 """
 from __future__ import absolute_import
 from __future__ import division
-
+# Standard __future__ imports
 from __future__ import print_function
 
-
+# Standard Imports
 
 import tensorflow as tf
 from tensorflow_model_analysis.eval_saved_model import export
@@ -43,9 +43,10 @@ def simple_linear_classifier(export_path, eval_export_path):
       [tf.feature_column.categorical_column_with_hash_bucket('slice_key', 100)])
 
   classifier = tf.estimator.LinearClassifier(
-      feature_columns=util.linear_columns())
-  classifier = tf.contrib.estimator.add_metrics(classifier,
-                                                util.classifier_extra_metrics)
+      feature_columns=util.linear_columns(),
+      loss_reduction=tf.losses.Reduction.SUM)
+  classifier = tf.estimator.add_metrics(classifier,
+                                        util.classifier_extra_metrics)
   classifier.train(
       input_fn=util.make_classifier_input_fn(
           tf.feature_column.make_parse_example_spec(util.linear_columns(True))),

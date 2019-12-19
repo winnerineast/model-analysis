@@ -13,46 +13,72 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-Polymer({
-  /**
-   * tfma-nb-plot is a wrapper component for tfma-plot to be used inside jupyter
-   * notebook.
-   */
-  is: 'tfma-nb-plot',
+import {PolymerElement} from '@polymer/polymer/polymer-element.js';
+import {template} from './tfma-nb-plot-template.html.js';
 
-  properties: {
-    /** @type {!Object} */
-    data: {type: Object},
+import '../tfma-plot/tfma-plot.js';
 
-    /** @type {!Object} */
-    config: {type: Object},
+/**
+ * tfma-nb-plot is a wrapper for tfma-plot component in the notebook setting.
+ * Like all notebook wrapper components, it is expected to have two public
+ * properties: data and config.
+ *
+ * @polymer
+ */
+export class NotebookPlotWrapper extends PolymerElement {
+  constructor() {
+    super();
+  }
 
-    /**
-     * Available plot types.
-     * @type {!Array<tfma.PlotTypes>|undefined}
-     */
-    availableTypes_:
-        {type: Array, computed: 'computeAvailableTypes_(plotData_, config)'},
+  static get is() {
+    return 'tfma-nb-plot';
+  }
 
-    /** @type {!Object} */
-    plotData_: {type: Object, computed: 'computePlotData_(data, config)'},
+  /** @return {!HTMLTemplateElement} */
+  static get template() {
+    return template;
+  }
 
-    /** @type {string} */
-    heading_: {type: String, computed: 'computeHeading_(config, initialType_)'},
+  /** @return {!PolymerElementProperties} */
+  static get properties() {
+    return {
+      /** @type {!Object} */
+      data: {type: Object},
 
-    /** @type {string} */
-    initialType_:
-        {type: String, computed: 'computeInitialType_(availableTypes_)'},
-  },
+      /** @type {!Object} */
+      config: {type: Object},
+
+      /**
+       * Available plot types.
+       * @type {!Array<!tfma.PlotTypes>|undefined}
+       */
+      availableTypes_:
+          {type: Array, computed: 'computeAvailableTypes_(plotData_)'},
+
+      /** @type {!Object} */
+      plotData_: {type: Object, computed: 'computePlotData_(data, config)'},
+
+      /** @type {string} */
+      heading_:
+          {type: String, computed: 'computeHeading_(config, initialType_)'},
+
+      /** @type {string} */
+      initialType_:
+          {type: String, computed: 'computeInitialType_(availableTypes_)'},
+    };
+  }
 
   /**
    * Computes the plot data based on raw data and config.
    * @param {!Object} data
    * @param {!Object} config
-   * @return {!Object}
+   * @return {(!Object|undefined)}
    * @private
    */
-  computePlotData_: function(data, config) {
+  computePlotData_(data, config) {
+    if (!data || !config) {
+      return undefined;
+    }
     const plotData = {};
     const metricKeys = config['metricKeys'];
     this.maybeSetPlotData_(
@@ -62,7 +88,7 @@ Polymer({
         data, metricKeys['aucPlot'], plotData,
         tfma.PlotDataFieldNames.PRECISION_RECALL_CURVE_DATA);
     return {'plotData': plotData};
-  },
+  }
 
   /**
    * Finds plot data as specified in plotConfig and if available, adds it to the
@@ -73,7 +99,7 @@ Polymer({
    * @param {string} outputKey
    * @private
    */
-  maybeSetPlotData_: function(data, plotConfig, output, outputKey) {
+  maybeSetPlotData_(data, plotConfig, output, outputKey) {
     const plotDataName = plotConfig && plotConfig['metricName'];
     if (plotDataName) {
       const dataSeriesName = plotConfig['dataSeries'];
@@ -83,17 +109,18 @@ Polymer({
         output[outputKey] = data[plotDataName];
       }
     }
-  },
+  }
+
   /**
    * @param {string|number} value
    * @return {number} value or NaN.
    * @private
    */
-  getValue_: function(value) {
+  getValue_(value) {
     // When NaN goes across the python / js bridge, it becomes the string "nan".
     // Convert it back to NaN.
     return value == 'nan' ? NaN : /** @type {number} */(value);
-  },
+  }
 
   /**
    * Determines the list of available plot based on the data.
@@ -101,21 +128,23 @@ Polymer({
    * @return {!Array<string>}
    * @private
    */
-  computeAvailableTypes_: function(plotData) {
-    const availableTypes = [];
-    const data = plotData && plotData['plotData'];
-    if (data) {
-      if (data[tfma.PlotDataFieldNames.CALIBRATION_DATA]) {
-        availableTypes.push(tfma.PlotTypes.CALIBRATION_PLOT);
-        availableTypes.push(tfma.PlotTypes.PREDICTION_DISTRIBUTION);
-      }
-      if (data[tfma.PlotDataFieldNames.PRECISION_RECALL_CURVE_DATA]) {
-        availableTypes.push(tfma.PlotTypes.PRECISION_RECALL_CURVE);
-        availableTypes.push(tfma.PlotTypes.ROC_CURVE);
-      }
+  computeAvailableTypes_(plotData) {
+    const data = plotData && plotData['plotData'] || {};
+    const plotMap = {};
+    if (data[tfma.PlotDataFieldNames.CALIBRATION_DATA]) {
+      plotMap[tfma.PlotTypes.CALIBRATION_PLOT] = 1;
     }
-    return availableTypes;
-  },
+    if (data[tfma.PlotDataFieldNames.PRECISION_RECALL_CURVE_DATA]) {
+      plotMap[tfma.PlotTypes.PRECISION_RECALL_CURVE] = 1;
+    }
+    if (data[tfma.PlotDataFieldNames.MULTI_CLASS_CONFUSION_MATRIX_DATA]) {
+      plotMap[tfma.PlotTypes.MULTI_CLASS_CONFUSION_MATRIX] = 1;
+    }
+    if (data[tfma.PlotDataFieldNames.MULTI_LABEL_CONFUSION_MATRIX_DATA]) {
+      plotMap[tfma.PlotTypes.MULTI_LABEL_CONFUSION_MATRIX] = 1;
+    }
+    return tfma.Data.getAvailablePlotTypes(plotMap);
+  }
 
   /**
    * Determines the heading of the plot.
@@ -124,20 +153,22 @@ Polymer({
    * @return {string}
    * @private
    */
-  computeHeading_: function(config, initialType) {
-    const sliceName = config['sliceName'];
+  computeHeading_(config, initialType) {
     if (!initialType) {
       return 'Plot data not available';
     }
+    const sliceName = config['sliceName'];
     return sliceName ? 'Plot for ' + sliceName : '';
-  },
+  }
 
   /**
    * @param {!Array<string>} availableTypes
    * @return {string} The initial type the plot should display.
    * @private
    */
-  computeInitialType_: function(availableTypes) {
+  computeInitialType_(availableTypes) {
     return availableTypes[0] || '';
-  },
-});
+  }
+}
+
+customElements.define('tfma-nb-plot', NotebookPlotWrapper);

@@ -139,15 +139,13 @@ const _ = __webpack_require__(3);
  * Helper method to load the vulcanized templates.
  */
 function loadVulcanizedTemplate() {
-  const templateLocation =
-      __webpack_require__.p + '/vulcanized_template.html';
+  const templateLocation = __webpack_require__.p + 'vulcanized_tfma.js';
 
   // If the vulcanizes tempalets are not loaded yet, load it now.
-  if (!document.querySelector('link[href="' + templateLocation + '"]')) {
-    const link = document.createElement('link');
-    link.setAttribute('rel', 'import');
-    link.setAttribute('href', templateLocation);
-    document.head.appendChild(link);
+  if (!document.querySelector('script[src="' + templateLocation + '"]')) {
+    const script = document.createElement('script');
+    script.setAttribute('src', templateLocation);
+    document.head.appendChild(script);
   }
 }
 
@@ -183,6 +181,7 @@ const SlicingMetricsModel = widgets.DOMWidgetModel.extend({
     _view_module_version: VIEW_VERSION,
     config: {},
     data: [],
+    js_events: [],
   })
 });
 
@@ -192,6 +191,10 @@ const SlicingMetricsView = widgets.DOMWidgetView.extend({
 
     this.view_ = document.createElement(SLICING_METRICS_ELEMENT_NAME);
     this.el.appendChild(this.view_);
+
+    this.view_.addEventListener('tfma-event', (e) => {
+      handleTfmaEvent(e, this);
+    });
 
     delayedRender(() => {
       this.configChanged_();
@@ -277,6 +280,15 @@ const PlotView = widgets.DOMWidgetView.extend({
     this.view_.config = this.model.get('config');
   },
 });
+
+const handleTfmaEvent = (tfmaEvent, view) => {
+  const model = view.model;
+  const jsEvents = model.get('js_events').slice();
+  const detail = tfmaEvent.detail;
+  jsEvents.push({'name': detail.type, 'detail': detail.detail});
+  model.set('js_events', jsEvents);
+  view.touch();
+};
 
 module.exports = {
   [PLOT_MODEL_NAME]: PlotModel,

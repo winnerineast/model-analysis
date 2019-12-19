@@ -16,14 +16,14 @@ limitations under the License.
 <meta charset="utf-8">
 <html>
   <head>
-    <script jscomp-nocompile src="js-lib-bin.js"></script>
-    <link rel="import"
-          href="../tfma-plot/tfma-plot.html">
     <style>
     tfma-plot {
         border: 1px dashed black;
         display: block;
         margin: 3px;
+      }
+      #pr-curve {
+        width: 600px;
       }
     </style>
   </head>
@@ -43,10 +43,22 @@ limitations under the License.
       </div>
       <div>
         <h3>Error / Reload</h3>
-        <tfma-plot id="error"></tfma-plot>
+        <tfma-plot id="error-matrix"></tfma-plot>
         <div id="reload-prompt"></div>
       </div>
     </div>
-    <script src="index.js"></script>
+    <div style="display:felx">
+      <div>
+        <h3>Flat View</h3>
+        <div>
+          Resize window to see the charts reflow.
+        </div>
+        <tfma-plot id="flat" flat style="width:75%;min-width:400px;"></tfma-plot>
+      </div>
+      <div>
+        <h3>Multi-class Confusion Matrix</h3>
+        <tfma-plot id="matrix"></tfma-plot>
+      </div>
+    </div>
   </body>
 </html>

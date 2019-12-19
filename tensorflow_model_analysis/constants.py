@@ -17,13 +17,59 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
-
-
+# Standard Imports
 
 # Mode for multiple model analysis runs
 UNKNOWN_EVAL_MODE = 'unknown_eval_mode'
 MODEL_CENTRIC_MODE = 'model_centric_mode'
 DATA_CENTRIC_MODE = 'data_centric_mode'
 
-# Keys to ExampleAndExtract extraction dictionary.
-FEATURES_PREDICTIONS_LABELS_KEY = 'fpl'
+# Types of placeholders
+PLACEHOLDER = 'placeholder'
+SPARSE_PLACEHOLDER = 'sparse_placeholder'
+
+# LINT.IfChange
+METRICS_NAMESPACE = 'tfx.ModelAnalysis'
+# LINT.ThenChange(../../../learning/fairness/infra/plx/scripts/tfma_metrics_computed_tracker_macros.sql)
+
+# Keys for Extracts dictionary (keys starting with _ will not be materialized).
+
+# Input key. Could be a serialised tf.train.Example, a CSV row, JSON data, etc
+# depending on what the EvalInputReceiver was configured to accept as input.
+INPUT_KEY = 'input'
+# Features, predictions, and labels key.
+FEATURES_PREDICTIONS_LABELS_KEY = '_fpl'
+# Contains SliceKeyTypes that are used to fanout and aggregate.
+SLICE_KEY_TYPES_KEY = '_slice_key_types'
+# Human-readable slice strings that are written to the diagnostic table for
+# analysis.
+SLICE_KEYS_KEY = 'slice_keys'
+# Features key.
+FEATURES_KEY = 'features'
+# Labels key.
+LABELS_KEY = 'labels'
+# Predictions key.
+PREDICTIONS_KEY = 'predictions'
+# Example weights key.
+EXAMPLE_WEIGHTS_KEY = 'example_weights'
+# Attributions key.
+ATTRIBUTIONS_KEY = 'attributions'
+
+# Keys used for standard attribution scores
+BASELINE_SCORE_KEY = 'baseline_score'
+EXAMPLE_SCORE_KEY = 'example_score'
+
+# Keys for Evaluation/Validation dictionaries
+
+# Metrics output key.
+METRICS_KEY = 'metrics'
+# Plots output key.
+PLOTS_KEY = 'plots'
+# Analysis output key.
+ANALYSIS_KEY = 'analysis'
+
+# Keys for validation alternatives
+BASELINE_KEY = 'baseline'
+CANDIDATE_KEY = 'candidate'
+
+MATERIALIZE_COLUMNS = 'materialize'

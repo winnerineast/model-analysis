@@ -21,66 +21,150 @@ from __future__ import division
 from __future__ import print_function
 
 import os
+# Standard Imports
 
-
+from absl.testing import parameterized
 import apache_beam as beam
 
 from apache_beam.testing import util
 
 import tensorflow as tf
 
-from tensorflow_model_analysis import types
+from tensorflow_model_analysis import constants
+from tensorflow_model_analysis.api import model_eval_lib
 from tensorflow_model_analysis.eval_saved_model import testutil
+from tensorflow_model_analysis.eval_saved_model.example_trainers import batch_size_limited_classifier
+from tensorflow_model_analysis.eval_saved_model.example_trainers import fake_multi_examples_per_input_estimator
 from tensorflow_model_analysis.eval_saved_model.example_trainers import linear_classifier
 from tensorflow_model_analysis.extractors import predict_extractor
 
 
-class PredictExtractorTest(testutil.TensorflowModelAnalysisTest):
+class PredictExtractorTest(testutil.TensorflowModelAnalysisTest,
+                           parameterized.TestCase):
 
   def _getEvalExportDir(self):
     return os.path.join(self._getTempDir(), 'eval_export_dir')
 
-  def testPredict(self):
+  @parameterized.parameters(
+      {'features_blacklist': None},
+      {'features_blacklist': ['age']},
+  )
+  def testPredict(self, features_blacklist):
     temp_eval_export_dir = self._getEvalExportDir()
     _, eval_export_dir = linear_classifier.simple_linear_classifier(
         None, temp_eval_export_dir)
-
+    eval_shared_model = model_eval_lib.default_eval_shared_model(
+        eval_saved_model_path=eval_export_dir,
+        blacklist_feature_fetches=features_blacklist)
     with beam.Pipeline() as pipeline:
-      example1 = self._makeExample(age=3.0, language='english', label=1.0)
-      example2 = self._makeExample(age=3.0, language='chinese', label=0.0)
-      example3 = self._makeExample(age=4.0, language='english', label=1.0)
-      example4 = self._makeExample(age=5.0, language='chinese', label=0.0)
+      examples = [
+          self._makeExample(age=3.0, language='english', label=1.0),
+          self._makeExample(age=3.0, language='chinese', label=0.0),
+          self._makeExample(age=4.0, language='english', label=1.0),
+          self._makeExample(age=5.0, language='chinese', label=0.0),
+      ]
+      serialized_examples = [e.SerializeToString() for e in examples]
 
       predict_extracts = (
           pipeline
-          | beam.Create([
-              example1.SerializeToString(),
-              example2.SerializeToString(),
-              example3.SerializeToString(),
-              example4.SerializeToString()
-          ])
-          # Our diagnostic outputs, pass types.ExampleAndExtracts throughout,
-          # however our aggregating functions do not use this interface.
-          | beam.Map(lambda x: types.ExampleAndExtracts(example=x, extracts={}))
-          | 'Predict' >> predict_extractor.TFMAPredict(
-              eval_saved_model_path=eval_export_dir, desired_batch_size=3))
+          | beam.Create(serialized_examples)
+          # Our diagnostic outputs, pass types.Extracts throughout, however our
+          # aggregating functions do not use this interface.
+          | beam.Map(lambda x: {constants.INPUT_KEY: x})
+          | 'Predict' >> predict_extractor._TFMAPredict(
+              eval_shared_model=eval_shared_model, desired_batch_size=3))
 
       def check_result(got):
         try:
-          self.assertEqual(4, len(got), 'got: %s' % got)
+          self.assertLen(got, 4)
           for item in got:
-            extracts_dict = item.extracts
-            self.assertTrue(extracts_dict.has_key('fpl'))
-            fpl = extracts_dict['fpl']
+            self.assertIn(constants.FEATURES_PREDICTIONS_LABELS_KEY, item)
+            fpl = item[constants.FEATURES_PREDICTIONS_LABELS_KEY]
             # Verify fpl contains features, probabilities, and correct labels.
-            self.assertIn('language', fpl.features)
-            self.assertIn('age', fpl.features)
-            self.assertIn('label', fpl.features)
-            self.assertIn('probabilities', fpl.predictions)
+            blacklisted_features = set(features_blacklist or [])
+            expected_features = (
+                set(['language', 'age', 'label']) - blacklisted_features)
+            for feature in expected_features:
+              self.assertIn(feature, fpl.features)
+            for feature in blacklisted_features:
+              self.assertNotIn(feature, fpl.features)
             self.assertAlmostEqual(fpl.features['label'],
                                    fpl.labels['__labels'])
+
         except AssertionError as err:
           raise util.BeamAssertException(err)
+
+      util.assert_that(predict_extracts, check_result)
+
+  def testBatchSizeLimit(self):
+    temp_eval_export_dir = self._getEvalExportDir()
+    _, eval_export_dir = batch_size_limited_classifier.simple_batch_size_limited_classifier(
+        None, temp_eval_export_dir)
+    eval_shared_model = model_eval_lib.default_eval_shared_model(
+        eval_saved_model_path=eval_export_dir)
+    with beam.Pipeline() as pipeline:
+      examples = [
+          self._makeExample(classes='first', scores=0.0, labels='third'),
+          self._makeExample(classes='first', scores=0.0, labels='third'),
+          self._makeExample(classes='first', scores=0.0, labels='third'),
+          self._makeExample(classes='first', scores=0.0, labels='third'),
+      ]
+      serialized_examples = [e.SerializeToString() for e in examples]
+
+      predict_extracts = (
+          pipeline
+          | beam.Create(serialized_examples)
+          # Our diagnostic outputs, pass types.Extracts throughout, however our
+          # aggregating functions do not use this interface.
+          | beam.Map(lambda x: {constants.INPUT_KEY: x})
+          | 'Predict' >>
+          predict_extractor._TFMAPredict(eval_shared_model=eval_shared_model))
+
+      def check_result(got):
+        self.assertLen(got, 4)
+        for item in got:
+          self.assertIn(constants.PREDICTIONS_KEY, item)
+
+      util.assert_that(predict_extracts, check_result)
+
+  # Verify that PredictExtractor can handle models that maps one
+  # raw_example_bytes to multiple examples.
+  def testPredictMultipleExampleRefPerRawExampleBytes(self):
+    temp_eval_export_dir = self._getEvalExportDir()
+    _, eval_export_dir = (
+        fake_multi_examples_per_input_estimator
+        .fake_multi_examples_per_input_estimator(None, temp_eval_export_dir))
+    eval_shared_model = model_eval_lib.default_eval_shared_model(
+        eval_saved_model_path=eval_export_dir)
+
+    # The trailing zeros make an "empty" output batch.
+    raw_example_bytes = ['0', '3', '1', '0', '2', '0', '0', '0', '0']
+
+    def check_result(got):
+      try:
+        self.assertLen(got, 6)
+        self.assertEqual(['3', '3', '3', '1', '2', '2'],
+                         [extracts[constants.INPUT_KEY] for extracts in got])
+
+        for item in got:
+          self.assertIn(constants.FEATURES_PREDICTIONS_LABELS_KEY, item)
+          fpl = item[constants.FEATURES_PREDICTIONS_LABELS_KEY]
+          self.assertIn('input_index', fpl.features)
+          self.assertIn('example_count', fpl.features)
+          self.assertIn('intra_input_index', fpl.features)
+
+      except AssertionError as err:
+        raise util.BeamAssertException(err)
+
+    with beam.Pipeline() as pipeline:
+      predict_extracts = (
+          pipeline
+          | beam.Create(raw_example_bytes)
+          # Our diagnostic outputs, pass types.Extracts throughout, however our
+          # aggregating functions do not use this interface.
+          | beam.Map(lambda x: {constants.INPUT_KEY: x})
+          | 'Predict' >> predict_extractor._TFMAPredict(
+              eval_shared_model=eval_shared_model, desired_batch_size=3))
 
       util.assert_that(predict_extracts, check_result)
 
